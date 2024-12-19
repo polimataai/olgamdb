@@ -439,10 +439,21 @@ def append_to_upload_process(new_donors, really_updated):
         # Setup Google Sheets connection
         scope = ['https://spreadsheets.google.com/feeds',
                 'https://www.googleapis.com/auth/drive']
-        credentials = ServiceAccountCredentials.from_json_keyfile_name(
-            r'C:\Users\omard\OneDrive\02_EMPRESAS\08_Polímata.AI\01_Proyectos\02_LeadScoring\jsonFileFromGoogle.json', 
-            scope
-        )
+        credentials_dict = {
+            "type": "service_account",
+            "project_id": "third-hangout-387516",
+            "private_key_id": st.secrets["private_key_id"],
+            "private_key": st.secrets["google_credentials"],
+            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+            "client_id": "114223947184571105588",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+            "universe_domain": "googleapis.com"
+        }
+        # Use the dictionary directly with from_json_keyfile_dict
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
         gc = gspread.authorize(credentials)
         spreadsheet_key = st.secrets["spreadsheet_key"]
         workbook = gc.open_by_key(spreadsheet_key)
@@ -532,10 +543,22 @@ def main():
                 # Save to databases
                 scope = ['https://spreadsheets.google.com/feeds',
                         'https://www.googleapis.com/auth/drive']
-                credentials = ServiceAccountCredentials.from_json_keyfile_name(
-                    r'C:\Users\omard\OneDrive\02_EMPRESAS\08_Polímata.AI\01_Proyectos\02_LeadScoring\jsonFileFromGoogle.json', 
-                    scope
-                )
+                credentials_dict = {
+                    "type": "service_account",
+                    "project_id": "third-hangout-387516",
+                    "private_key_id": st.secrets["private_key_id"],
+                    "private_key": st.secrets["google_credentials"],
+                    "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+                    "client_id": "114223947184571105588",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+                    "universe_domain": "googleapis.com"
+                }
+                
+                # Use the dictionary directly with from_json_keyfile_dict
+                credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
                 gc = gspread.authorize(credentials)
                 spreadsheet_key = st.secrets["spreadsheet_key"]
                 workbook = gc.open_by_key(spreadsheet_key)
