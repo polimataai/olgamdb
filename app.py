@@ -154,8 +154,8 @@ def process_name(name):
         last_name = ''
     
     # Clean and capitalize
-    first_name = first_name.strip().lower().capitalize()
-    last_name = last_name.strip().lower().capitalize()
+    first_name = ' '.join(word.strip().lower().capitalize() for word in first_name.split())
+    last_name = ' '.join(word.strip().lower().capitalize() for word in last_name.split())
     
     return first_name, last_name
 
