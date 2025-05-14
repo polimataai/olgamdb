@@ -121,7 +121,7 @@ REQUIRED_COLUMNS = [
     'Hour Checked In', 'Day Of The Week', 'Age', 'Check-In Time',
     'Check-Out Time (Adjusted)', 'Visit mins. (Adjusted)', 'Donor Address Line 1',
     'Donor Address Line 2', 'City', 'Zip Code', 'Donor Status', 'Qual. Status',
-    'Last 	Donation Date', 'Pure Plasma', 'Target Volume', 'DOB'
+    'Last 	Donation Date', 'Pure Plasma', 'Target Volume'
 ]
 
 def format_phone(phone):
@@ -179,11 +179,9 @@ def process_data(df):
     processed_df['Donor Status'] = df['Donor Status']
     processed_df['Facility'] = df['Facility']
     
-    # Process DOB if present
+    # Extract DOB (Birthday) from column DOB if it exists
     if 'DOB' in df.columns:
         processed_df['Birthday'] = df['DOB']
-    else:
-        processed_df['Birthday'] = 'x'  # Placeholder for missing DOB column
     
     # Process names
     names = df['Donor Name'].apply(process_name)
@@ -264,23 +262,8 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        
-        # Get all columns up to column O (15 columns)
-        max_columns = 15
-        headers = all_values[0]
-        # Extend headers if needed to have enough columns
-        if len(headers) < max_columns:
-            headers.extend([''] * (max_columns - len(headers)))
-        headers = headers[:max_columns]
-        
-        # Get the data rows, also making sure we have enough columns
-        data = []
-        for row in all_values[1:]:
-            # Extend row if needed
-            if len(row) < max_columns:
-                row.extend([''] * (max_columns - len(row)))
-            data.append(row[:max_columns])
-        
+        headers = all_values[0][:10]
+        data = [row[:10] for row in all_values[1:]]
         master_df = pd.DataFrame(data, columns=headers)
         return master_df
     except Exception as e:
@@ -289,28 +272,10 @@ def load_master_db():
 
 def compare_dataframes(processed_df, master_df):
     """Compare processed data with master database to find new and updated records."""
-    # Define expected column names
-    expected_columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
+    # Ensure both dataframes have the same column names
+    master_df.columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
                         'Donor Account #', 'Donor Phone', 'Donor Address', 
                         'Zip Code', 'Donor Status', 'Center']
-    
-    # Add placeholder columns
-    placeholder_columns = ['x', 'x', 'x', 'x']
-    
-    # Add Birthday column
-    birthday_column = ['Birthday']
-    
-    # All columns in expected order
-    all_columns = expected_columns + placeholder_columns + birthday_column
-    
-    # Ensure master_df has all required columns
-    for idx, col in enumerate(all_columns):
-        if idx >= len(master_df.columns):
-            # Add missing column
-            master_df[col] = ''
-        else:
-            # Rename existing column
-            master_df = master_df.rename(columns={master_df.columns[idx]: col})
     
     # Convert master_df Donor # to string for comparison
     master_df['Donor #'] = master_df['Donor #'].astype(str)
@@ -348,11 +313,10 @@ def compare_dataframes(processed_df, master_df):
         return x
     
     # Apply standardization to relevant fields
-    fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthday']
+    fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center']
     for field in fields_to_compare:
-        if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
-            comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
-            comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
+        comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
+        comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
     
     # Check for changes in specific fields (ignoring format)
     updated_mask = (
@@ -362,29 +326,19 @@ def compare_dataframes(processed_df, master_df):
         (comparison_df['Center_new'] != comparison_df['Center_master'])
     )
     
-    # Add Birthday comparison if columns exist
-    if 'Birthday_new' in comparison_df.columns and 'Birthday_master' in comparison_df.columns:
-        updated_mask = updated_mask | (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
-    
     # Get updated records using the correct column name (Donor #_new)
     updated_donors = existing_donors[existing_donors['Donor #'].isin(
         comparison_df[updated_mask]['Donor #_new']
     )]
     
     # Create really_updated DataFrame for records with specific changes
-    really_updated_mask = (
-        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
-        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
-        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-        (comparison_df['Center_new'] != comparison_df['Center_master'])
-    )
-    
-    # Add Birthday comparison if columns exist
-    if 'Birthday_new' in comparison_df.columns and 'Birthday_master' in comparison_df.columns:
-        really_updated_mask = really_updated_mask | (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
-    
     really_updated = existing_donors[existing_donors['Donor #'].isin(
-        comparison_df[really_updated_mask]['Donor #_new']
+        comparison_df[
+            (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
+            (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
+            (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
+            (comparison_df['Center_new'] != comparison_df['Center_master'])
+        ]['Donor #_new']
     )]
     
     # Remove the temporary composite key columns before returning
@@ -400,8 +354,7 @@ def update_master_database(master_df, new_donors, really_updated):
     # Define the correct column order
     SHEET_COLUMNS = [
         'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
-        'x', 'x', 'x', 'x', 'Birthday'  # Added placeholders and Birthday column
+        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
     ]
     
     # Create a copy of master_df to avoid modifying the original
@@ -416,20 +369,12 @@ def update_master_database(master_df, new_donors, really_updated):
         really_updated_formatted = really_updated.copy()
         really_updated_formatted['Center'] = really_updated_formatted['Facility']
         really_updated_formatted = really_updated_formatted.drop('Facility', axis=1)
-        # Add placeholder columns
-        for col in ['x', 'x', 'x', 'x']:
-            if col not in really_updated_formatted.columns:
-                really_updated_formatted[col] = 'x'
     
     # Prepare new_donors records for concatenation
     if not new_donors.empty:
         new_donors_formatted = new_donors.copy()
         new_donors_formatted['Center'] = new_donors_formatted['Facility']
         new_donors_formatted = new_donors_formatted.drop('Facility', axis=1)
-        # Add placeholder columns
-        for col in ['x', 'x', 'x', 'x']:
-            if col not in new_donors_formatted.columns:
-                new_donors_formatted[col] = 'x'
     
     # Concatenate the dataframes
     frames_to_concat = [updated_master_df]
@@ -476,19 +421,17 @@ def get_leads_for_upload(new_donors, really_updated, master_df):
         # Standardize values for comparison
         new_phone = str(row['Donor Phone']).lower().strip() if pd.notna(row['Donor Phone']) else ''
         new_email = str(row['Donor E-mail']).lower().strip() if pd.notna(row['Donor E-mail']) else ''
-        new_birthday = str(row['Birthday']).lower().strip() if pd.notna(row['Birthday']) else ''
         master_phone = str(master_record['Donor Phone']).lower().strip() if pd.notna(master_record['Donor Phone']) else ''
         master_email = str(master_record['Donor E-mail']).lower().strip() if pd.notna(master_record['Donor E-mail']) else ''
-        master_birthday = str(master_record['Birthday']).lower().strip() if 'Birthday' in master_record and pd.notna(master_record['Birthday']) else ''
         
-        return new_phone != master_phone or new_email != master_email or new_birthday != master_birthday
+        return new_phone != master_phone or new_email != master_email
     
     # Combine new donors and really updated records
     if not new_donors.empty:
         leads_df = pd.concat([leads_df, new_donors])
     
     if not really_updated.empty:
-        # Filter really_updated for only those with phone, email, or birthday changes
+        # Filter really_updated for only those with phone or email changes
         important_updates = really_updated[really_updated.apply(lambda x: has_important_updates(x, master_df), axis=1)]
         leads_df = pd.concat([leads_df, important_updates])
     
@@ -523,8 +466,8 @@ def append_to_upload_process(new_donors, really_updated):
         # Define the correct column order
         UPLOAD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
-            'x', 'x', 'x', 'x', 'Birthday'  # Added placeholders and Birthday column
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
+            'Birthday', 'K', 'L', 'M', 'N'
         ]
 
         # Combine new and updated records
@@ -536,11 +479,16 @@ def append_to_upload_process(new_donors, really_updated):
         if 'Facility' in records_to_append.columns:
             records_to_append['Center'] = records_to_append['Facility']
             records_to_append = records_to_append.drop('Facility', axis=1)
+            
+        # Add columns K, L, M, N with 'x' values
+        records_to_append['K'] = 'x'
+        records_to_append['L'] = 'x'
+        records_to_append['M'] = 'x'
+        records_to_append['N'] = 'x'
         
-        # Add placeholder columns
-        for col in ['x', 'x', 'x', 'x']:
-            if col not in records_to_append.columns:
-                records_to_append[col] = 'x'
+        # If Birthday column doesn't exist, create it as empty
+        if 'Birthday' not in records_to_append.columns:
+            records_to_append['Birthday'] = ''
 
         # Reorder columns to match required order
         records_to_append = records_to_append[UPLOAD_COLUMNS]
