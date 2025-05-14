@@ -118,7 +118,7 @@ def check_password():
 SHEET_COLUMNS = [
     'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
     'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
-    'Birthdate'  # Added Birthdate
+    'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate'  # Positioned Birthdate in column O (15th column)
 ]
 
 # Define the required columns for file validation
@@ -284,8 +284,8 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        headers = all_values[0][:11]  # Updated to include Birthdate (11 columns instead of 10)
-        data = [row[:11] for row in all_values[1:]]  # Updated to include Birthdate
+        headers = all_values[0][:15]  # Updated to include all columns up to O (15 columns)
+        data = [row[:15] for row in all_values[1:]]  # Updated to include all columns up to O
         master_df = pd.DataFrame(data, columns=headers)
         return master_df
     except Exception as e:
@@ -297,7 +297,8 @@ def compare_dataframes(processed_df, master_df):
     # Ensure both dataframes have the same column names
     master_df.columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
                         'Donor Account #', 'Donor Phone', 'Donor Address', 
-                        'Zip Code', 'Donor Status', 'Center', 'Birthdate']  # Updated to include Birthdate
+                        'Zip Code', 'Donor Status', 'Center', 
+                        'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate']  # Updated column structure
     
     # Convert master_df Donor # to string for comparison
     master_df['Donor #'] = master_df['Donor #'].astype(str)
@@ -378,7 +379,8 @@ def update_master_database(master_df, new_donors, really_updated):
     # Define the correct column order
     SHEET_COLUMNS = [
         'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 'Birthdate'  # Updated to include Birthdate
+        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
+        'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate'  # Positioned Birthdate in column O (15th column)
     ]
     
     # Create a copy of master_df to avoid modifying the original
@@ -393,12 +395,27 @@ def update_master_database(master_df, new_donors, really_updated):
         really_updated_formatted = really_updated.copy()
         really_updated_formatted['Center'] = really_updated_formatted['Facility']
         really_updated_formatted = really_updated_formatted.drop('Facility', axis=1)
+        # Add placeholder columns to ensure Birthdate is in column O
+        really_updated_formatted['Column K'] = None
+        really_updated_formatted['Column L'] = None  
+        really_updated_formatted['Column M'] = None
+        really_updated_formatted['Column N'] = None
     
     # Prepare new_donors records for concatenation
     if not new_donors.empty:
         new_donors_formatted = new_donors.copy()
         new_donors_formatted['Center'] = new_donors_formatted['Facility']
         new_donors_formatted = new_donors_formatted.drop('Facility', axis=1)
+        # Add placeholder columns to ensure Birthdate is in column O
+        new_donors_formatted['Column K'] = None
+        new_donors_formatted['Column L'] = None
+        new_donors_formatted['Column M'] = None
+        new_donors_formatted['Column N'] = None
+    
+    # Ensure master_df has all the required columns
+    for col in SHEET_COLUMNS:
+        if col not in updated_master_df.columns:
+            updated_master_df[col] = None
     
     # Concatenate the dataframes
     frames_to_concat = [updated_master_df]
@@ -490,7 +507,8 @@ def append_to_upload_process(new_donors, really_updated):
         # Define the correct column order
         UPLOAD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 'Birthdate'  # Updated to include Birthdate
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
+            'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate'  # Positioned Birthdate in column O
         ]
 
         # Combine new and updated records
@@ -502,6 +520,12 @@ def append_to_upload_process(new_donors, really_updated):
         if 'Facility' in records_to_append.columns:
             records_to_append['Center'] = records_to_append['Facility']
             records_to_append = records_to_append.drop('Facility', axis=1)
+            
+        # Add placeholder columns to ensure Birthdate is in column O
+        records_to_append['Column K'] = None
+        records_to_append['Column L'] = None
+        records_to_append['Column M'] = None
+        records_to_append['Column N'] = None
 
         # Reorder columns to match required order
         records_to_append = records_to_append[UPLOAD_COLUMNS]
