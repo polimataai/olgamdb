@@ -482,98 +482,97 @@ def load_master_db():
 
 def compare_dataframes(processed_df, master_df):
     """Compare processed data with master database to find new and updated records."""
-    # Rename columns to standard names
-    # Get the column index for birthdate (should be column O or index 14)
-    birthdate_column_index = 14
+    # Convert all columns we need to strings for safer comparison
+    if 'Donor #' in master_df.columns:
+        master_df['Donor #'] = master_df['Donor #'].astype(str)
     
-    # Ensure both dataframes have the same column names for the first 10 columns plus birthdate
-    column_names = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
-                   'Donor Account #', 'Donor Phone', 'Donor Address', 
-                   'Zip Code', 'Donor Status', 'Center']
+    if 'Donor #' in processed_df.columns:
+        processed_df['Donor #'] = processed_df['Donor #'].astype(str)
     
-    # Rename the first 10 columns
-    for i, name in enumerate(column_names):
-        if i < len(master_df.columns):
-            master_df = master_df.rename(columns={master_df.columns[i]: name})
+    # Create composite keys for easier matching
+    if 'Facility' in processed_df.columns and 'Donor #' in processed_df.columns:
+        processed_df['composite_key'] = processed_df['Donor #'] + '_' + processed_df['Facility']
     
-    # Rename the birthdate column (column O)
-    if birthdate_column_index < len(master_df.columns):
-        master_df = master_df.rename(columns={master_df.columns[birthdate_column_index]: 'Birthdate'})
-    elif 'Birthdate' not in master_df.columns:
-        # If column O doesn't exist, add it
-        master_df['Birthdate'] = ''
+    if 'Center' in master_df.columns and 'Donor #' in master_df.columns:
+        master_df['composite_key'] = master_df['Donor #'] + '_' + master_df['Center']
     
-    # Convert master_df Donor # to string for comparison
-    master_df['Donor #'] = master_df['Donor #'].astype(str)
-    
-    # Create a composite key for comparison
-    processed_df['composite_key'] = processed_df['Donor #'] + '_' + processed_df['Facility']
-    master_df['composite_key'] = master_df['Donor #'] + '_' + master_df['Center']
-    
-    # Find new records (donors that don't exist in master_df based on composite key)
-    new_donors = processed_df[~processed_df['composite_key'].isin(master_df['composite_key'])]
-    
-    # For existing donors, check for updates
-    existing_donors = processed_df[processed_df['composite_key'].isin(master_df['composite_key'])]
-    
-    # Create a copy of existing_donors with 'Facility' renamed to 'Center' for comparison
-    existing_donors_comp = existing_donors.copy()
-    existing_donors_comp['Center'] = existing_donors_comp['Facility']
-    
-    # Merge to compare differences using composite key
-    comparison_df = existing_donors_comp.merge(
-        master_df[['composite_key', 'Donor #', 'Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']],
-        on='composite_key',
-        how='left',
-        suffixes=('_new', '_master')
-    )
-    
-    # Function to standardize values for comparison
-    def standardize_value(x):
-        if pd.isna(x) or x == '':
-            return ''
-        # Convert to string and clean
-        try:
-            x_str = str(x).lower().strip()
-            # Remove all spaces, special characters, and punctuation
-            return re.sub(r'[^a-z0-9@.]', '', x_str)
-        except:
-            # If any error occurs, return empty string
-            return ''
-    
-    # Apply standardization to relevant fields
-    fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']
-    for field in fields_to_compare:
-        if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
-            comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(lambda x: standardize_value(x))
-            comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(lambda x: standardize_value(x))
-    
-    # Check for changes in specific fields (ignoring format)
-    fields_updated = []
-    for field in fields_to_compare:
-        if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
-            fields_updated.append(comparison_df[f'{field}_new'] != comparison_df[f'{field}_master'])
-    
-    # Combine the update masks with logical OR
-    if fields_updated:
-        updated_mask = fields_updated[0]
-        for mask in fields_updated[1:]:
-            updated_mask = updated_mask | mask
+    # Convert to lists for safer iteration
+    if 'composite_key' in master_df.columns:
+        master_keys = master_df['composite_key'].tolist()
     else:
-        updated_mask = pd.Series(False, index=comparison_df.index)
+        master_keys = []
     
-    # Get updated records using the correct column name (Donor #_new)
-    updated_donors = existing_donors[existing_donors['Donor #'].isin(
-        comparison_df[updated_mask]['Donor #_new']
-    )]
+    # Find new donors (not in master database)
+    new_donors_list = []
+    updated_donors_list = []
     
-    # Create really_updated DataFrame with the same logic
+    # Process each row individually to avoid Series comparison issues
+    for idx, row in processed_df.iterrows():
+        if 'composite_key' not in row or pd.isna(row['composite_key']):
+            continue
+            
+        if row['composite_key'] not in master_keys:
+            # This is a new donor
+            new_donors_list.append(idx)
+        else:
+            # This is an existing donor - check for updates
+            master_row = master_df[master_df['composite_key'] == row['composite_key']].iloc[0]
+            
+            # Check for changes in specific fields
+            has_changes = False
+            
+            # Email comparison
+            if ('Donor E-mail' in row and 'Donor E-mail' in master_row and 
+                _safe_standardize(row['Donor E-mail']) != _safe_standardize(master_row['Donor E-mail'])):
+                has_changes = True
+                
+            # Phone comparison    
+            if ('Donor Phone' in row and 'Donor Phone' in master_row and 
+                _safe_standardize(row['Donor Phone']) != _safe_standardize(master_row['Donor Phone'])):
+                has_changes = True
+                
+            # Address comparison
+            if ('Donor Address' in row and 'Donor Address' in master_row and 
+                _safe_standardize(row['Donor Address']) != _safe_standardize(master_row['Donor Address'])):
+                has_changes = True
+                
+            # Birthdate comparison
+            if ('Birthdate' in row and 'Birthdate' in master_row and 
+                _safe_standardize(row['Birthdate']) != _safe_standardize(master_row['Birthdate'])):
+                has_changes = True
+            
+            if has_changes:
+                updated_donors_list.append(idx)
+    
+    # Create dataframes from the lists of indices
+    new_donors = processed_df.loc[new_donors_list].copy() if new_donors_list else pd.DataFrame()
+    updated_donors = processed_df.loc[updated_donors_list].copy() if updated_donors_list else pd.DataFrame()
+    
+    # Clean up temporary columns
+    if 'composite_key' in new_donors.columns:
+        new_donors = new_donors.drop('composite_key', axis=1)
+    
+    if 'composite_key' in updated_donors.columns:
+        updated_donors = updated_donors.drop('composite_key', axis=1)
+    
+    # For consistency with the original function
     really_updated = updated_donors.copy()
     
-    # Remove the temporary composite key columns before returning
-    new_donors = new_donors.drop('composite_key', axis=1)
-    
     return new_donors, updated_donors, really_updated
+
+def _safe_standardize(value):
+    """Safely standardize a value for comparison, handling all edge cases."""
+    if pd.isna(value):
+        return ''
+    
+    try:
+        # Convert to string and standardize
+        value_str = str(value).lower().strip()
+        # Remove all non-alphanumeric characters except @ and .
+        return re.sub(r'[^a-z0-9@.]', '', value_str)
+    except:
+        # Return empty string for any errors
+        return ''
 
 def update_master_database(master_df, new_donors, really_updated):
     """Update master database with new and updated records."""
