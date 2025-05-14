@@ -251,15 +251,15 @@ def process_data(df, column_mapping):
     # Process names
     if 'donor_name' in column_mapping and column_mapping['donor_name']:
         names = df[column_mapping['donor_name']].apply(process_name)
-        processed_df['Donor First'] = names.apply(lambda x: x[0])
-        processed_df['Donor Last'] = names.apply(lambda x: x[1])
+    processed_df['Donor First'] = names.apply(lambda x: x[0])
+    processed_df['Donor Last'] = names.apply(lambda x: x[1])
     
     # Process email
     if 'donor_email' in column_mapping and column_mapping['donor_email']:
         processed_df['Donor E-mail'] = df[column_mapping['donor_email']].str.lower()
-        # Remove both types of invalid emails
-        invalid_emails = ['someone@plasmaworld.com', 'someone@plasma.com', 'some@plasmaworld.com','someone@plasmaworld.om', 'na@na.com', 'someoneinplasma@gmail.com', 'someoneinplasma@gmail.com']
-        processed_df.loc[processed_df['Donor E-mail'].isin(invalid_emails), 'Donor E-mail'] = None
+    # Remove both types of invalid emails
+    invalid_emails = ['someone@plasmaworld.com', 'someone@plasma.com', 'some@plasmaworld.com','someone@plasmaworld.om', 'na@na.com', 'someoneinplasma@gmail.com', 'someoneinplasma@gmail.com']
+    processed_df.loc[processed_df['Donor E-mail'].isin(invalid_emails), 'Donor E-mail'] = None
     
     # Process phone
     if 'donor_phone' in column_mapping and column_mapping['donor_phone']:
@@ -268,7 +268,7 @@ def process_data(df, column_mapping):
     # Combine addresses
     if 'address_line1' in column_mapping and column_mapping['address_line1'] and 'address_line2' in column_mapping and column_mapping['address_line2']:
         processed_df['Donor Address'] = df[column_mapping['address_line1']].fillna('') + ' ' + df[column_mapping['address_line2']].fillna('')
-        processed_df['Donor Address'] = processed_df['Donor Address'].str.strip()
+    processed_df['Donor Address'] = processed_df['Donor Address'].str.strip()
     elif 'address_line1' in column_mapping and column_mapping['address_line1']:
         processed_df['Donor Address'] = df[column_mapping['address_line1']].fillna('')
     
@@ -457,24 +457,9 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        
-        # Get all columns including any potential data in columns L through O
-        headers = all_values[0]
-        # Ensure we have at least 15 columns (A through O)
-        if len(headers) < 15:
-            headers.extend([''] * (15 - len(headers)))
-        
-        # Extract all data rows
-        data = []
-        for row in all_values[1:]:
-            # Ensure each row has 15 columns
-            if len(row) < 15:
-                row.extend([''] * (15 - len(row)))
-            data.append(row)
-        
-        # Create a dataframe with all columns
+        headers = all_values[0][:15]  # Updated to include up to column O (Birthdate)
+        data = [row[:15] for row in all_values[1:]]
         master_df = pd.DataFrame(data, columns=headers)
-        
         return master_df
     except Exception as e:
         st.error(f"Error loading master database: {str(e)}")
@@ -482,104 +467,115 @@ def load_master_db():
 
 def compare_dataframes(processed_df, master_df):
     """Compare processed data with master database to find new and updated records."""
-    # Convert all columns we need to strings for safer comparison
-    if 'Donor #' in master_df.columns:
-        master_df['Donor #'] = master_df['Donor #'].astype(str)
+    # Ensure both dataframes have the same column names
+    master_columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
+                      'Donor Account #', 'Donor Phone', 'Donor Address', 
+                      'Zip Code', 'Donor Status', 'Center']
     
-    if 'Donor #' in processed_df.columns:
-        processed_df['Donor #'] = processed_df['Donor #'].astype(str)
+    # Add placeholder columns if present in master_df
+    for i in range(1, 5):
+        placeholder_col = f'Placeholder{i}'
+        if placeholder_col in master_df.columns:
+            master_columns.append(placeholder_col)
     
-    # Create composite keys for easier matching
-    if 'Facility' in processed_df.columns and 'Donor #' in processed_df.columns:
-        processed_df['composite_key'] = processed_df['Donor #'] + '_' + processed_df['Facility']
+    # Add Birthdate column
+    master_columns.append('Birthdate')
     
-    if 'Center' in master_df.columns and 'Donor #' in master_df.columns:
+    # Use only available columns from master_df
+    available_columns = [col for col in master_columns if col in master_df.columns]
+    master_df = master_df[available_columns]
+    
+    # Convert master_df Donor # to string for comparison
+    master_df['Donor #'] = master_df['Donor #'].astype(str)
+    
+    # Create a composite key for comparison
+    processed_df['composite_key'] = processed_df['Donor #'] + '_' + processed_df['Facility']
+    if 'Center' in master_df.columns:
         master_df['composite_key'] = master_df['Donor #'] + '_' + master_df['Center']
     
-    # Convert to lists for safer iteration
-    if 'composite_key' in master_df.columns:
-        master_keys = master_df['composite_key'].tolist()
-    else:
-        master_keys = []
+    # Find new records (donors that don't exist in master_df based on composite key)
+    new_donors = processed_df[~processed_df['composite_key'].isin(master_df['composite_key'])]
     
-    # Find new donors (not in master database)
-    new_donors_list = []
-    updated_donors_list = []
+    # For existing donors, check for updates
+    existing_donors = processed_df[processed_df['composite_key'].isin(master_df['composite_key'])]
     
-    # Process each row individually to avoid Series comparison issues
-    for idx, row in processed_df.iterrows():
-        if 'composite_key' not in row or pd.isna(row['composite_key']):
-            continue
-            
-        if row['composite_key'] not in master_keys:
-            # This is a new donor
-            new_donors_list.append(idx)
-        else:
-            # This is an existing donor - check for updates
-            master_row = master_df[master_df['composite_key'] == row['composite_key']].iloc[0]
-            
-            # Check for changes in specific fields
-            has_changes = False
-            
-            # Email comparison
-            if ('Donor E-mail' in row and 'Donor E-mail' in master_row and 
-                _safe_standardize(row['Donor E-mail']) != _safe_standardize(master_row['Donor E-mail'])):
-                has_changes = True
-                
-            # Phone comparison    
-            if ('Donor Phone' in row and 'Donor Phone' in master_row and 
-                _safe_standardize(row['Donor Phone']) != _safe_standardize(master_row['Donor Phone'])):
-                has_changes = True
-                
-            # Address comparison
-            if ('Donor Address' in row and 'Donor Address' in master_row and 
-                _safe_standardize(row['Donor Address']) != _safe_standardize(master_row['Donor Address'])):
-                has_changes = True
-                
-            # Birthdate comparison
-            if ('Birthdate' in row and 'Birthdate' in master_row and 
-                _safe_standardize(row['Birthdate']) != _safe_standardize(master_row['Birthdate'])):
-                has_changes = True
-            
-            if has_changes:
-                updated_donors_list.append(idx)
+    # Create a copy of existing_donors with 'Facility' renamed to 'Center' for comparison
+    existing_donors_comp = existing_donors.copy()
+    existing_donors_comp['Center'] = existing_donors_comp['Facility']
     
-    # Create dataframes from the lists of indices
-    new_donors = processed_df.loc[new_donors_list].copy() if new_donors_list else pd.DataFrame()
-    updated_donors = processed_df.loc[updated_donors_list].copy() if updated_donors_list else pd.DataFrame()
+    # Merge to compare differences using composite key
+    comparison_df = existing_donors_comp.merge(
+        master_df,
+        on='composite_key',
+        how='left',
+        suffixes=('_new', '_master')
+    )
     
-    # Clean up temporary columns
-    if 'composite_key' in new_donors.columns:
-        new_donors = new_donors.drop('composite_key', axis=1)
+    # Function to standardize values for comparison
+    def standardize_value(x):
+        if pd.isna(x):
+            return ''
+        # Convert to string and clean
+        x = str(x).lower().strip()
+        # Remove all spaces, special characters, and punctuation
+        x = re.sub(r'[^a-z0-9@.]', '', x)
+        return x
     
-    if 'composite_key' in updated_donors.columns:
-        updated_donors = updated_donors.drop('composite_key', axis=1)
+    # Apply standardization to relevant fields
+    fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']
+    for field in fields_to_compare:
+        if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
+            comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
+            comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
     
-    # For consistency with the original function
-    really_updated = updated_donors.copy()
+    # Check for changes in specific fields (ignoring format)
+    updated_mask = (
+        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
+        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
+        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
+        (comparison_df['Center_new'] != comparison_df['Center_master'])
+    )
+    
+    # Add birthdate comparison if it exists in both dataframes
+    if 'Birthdate_new' in comparison_df.columns and 'Birthdate_master' in comparison_df.columns:
+        updated_mask = updated_mask | (comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])
+    
+    # Get updated records using the correct column name (Donor #_new)
+    updated_donors = existing_donors[existing_donors['Donor #'].isin(
+        comparison_df[updated_mask]['Donor #_new']
+    )]
+    
+    # Create really_updated DataFrame for records with specific changes
+    really_updated_mask = (
+        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
+        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
+        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
+        (comparison_df['Center_new'] != comparison_df['Center_master'])
+    )
+    
+    # Add birthdate comparison if it exists in both dataframes
+    if 'Birthdate_new' in comparison_df.columns and 'Birthdate_master' in comparison_df.columns:
+        really_updated_mask = really_updated_mask | (comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])
+    
+    really_updated = existing_donors[existing_donors['Donor #'].isin(
+        comparison_df[really_updated_mask]['Donor #_new']
+    )]
+    
+    # Remove the temporary composite key columns before returning
+    new_donors = new_donors.drop('composite_key', axis=1)
+    
+    # Clean up comparison_df before using it for updates
+    comparison_df = comparison_df.drop(['composite_key'], axis=1)
     
     return new_donors, updated_donors, really_updated
 
-def _safe_standardize(value):
-    """Safely standardize a value for comparison, handling all edge cases."""
-    if pd.isna(value):
-        return ''
-    
-    try:
-        # Convert to string and standardize
-        value_str = str(value).lower().strip()
-        # Remove all non-alphanumeric characters except @ and .
-        return re.sub(r'[^a-z0-9@.]', '', value_str)
-    except:
-        # Return empty string for any errors
-        return ''
-
 def update_master_database(master_df, new_donors, really_updated):
     """Update master database with new and updated records."""
-    # Define standard columns we want to keep in order A-J
-    STANDARD_COLUMNS = [
+    # Define the correct column order
+    SHEET_COLUMNS = [
         'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
+        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
+        'Placeholder1', 'Placeholder2', 'Placeholder3', 'Placeholder4', 'Birthdate'
     ]
     
     # Create a copy of master_df to avoid modifying the original
@@ -610,44 +606,28 @@ def update_master_database(master_df, new_donors, really_updated):
     
     final_master_df = pd.concat(frames_to_concat, ignore_index=True)
     
-    # Return the final dataframe
+    # Add placeholder columns if they don't exist
+    for i in range(1, 5):
+        placeholder_col = f'Placeholder{i}'
+        if placeholder_col not in final_master_df.columns:
+            final_master_df[placeholder_col] = ''
+    
+    # Reorder columns to match Google Sheets
+    final_master_df = final_master_df[SHEET_COLUMNS]
+    
     return final_master_df
 
 def save_to_gsheets(df, worksheet):
-    """Save dataframe to Google Sheets, placing Birthdate in column O."""
+    """Save dataframe to Google Sheets."""
     try:
         # Clear existing content
         worksheet.clear()
         
-        # Define columns A-J (standard columns)
-        standard_columns = [
-            'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
-        ]
-        
-        # Create a new dataframe with the standard columns
-        output_df = df[standard_columns].copy()
-        
-        # Add empty columns K through N
-        for i in range(4):  # Add columns K, L, M, N
-            col_name = f"Column_{chr(75 + i)}"  # K=75, L=76, M=77, N=78
-            output_df[col_name] = ""
-        
-        # Add Birthdate in column O
-        output_df["Birthdate"] = df["Birthdate"] if "Birthdate" in df.columns else ""
-        
         # Replace NaN values with empty strings
-        output_df_clean = output_df.fillna('')
+        df_clean = df.fillna('')
         
         # Update with new content
-        worksheet.update([output_df_clean.columns.values.tolist()] + output_df_clean.values.tolist())
-        
-        # If needed, update column headers to their proper names
-        header_row = ["Donor #", "Donor First", "Donor Last", "Donor E-mail", "Donor Account #",
-                     "Donor Phone", "Donor Address", "Zip Code", "Donor Status", "Center",
-                     "", "", "", "", "Birthdate"]
-        worksheet.update('A1:O1', [header_row])
-        
+        worksheet.update([df_clean.columns.values.tolist()] + df_clean.values.tolist())
         return True
     except Exception as e:
         st.error(f"Error saving to Google Sheets: {str(e)}")
@@ -710,10 +690,11 @@ def append_to_upload_process(new_donors, really_updated):
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('UPLOAD_PROCESS')
 
-        # Define standard columns (A-J)
-        STANDARD_COLUMNS = [
+        # Define the correct column order
+        UPLOAD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
+            'Placeholder1', 'Placeholder2', 'Placeholder3', 'Placeholder4', 'Birthdate'
         ]
 
         # Combine new and updated records
@@ -726,28 +707,24 @@ def append_to_upload_process(new_donors, really_updated):
             records_to_append['Center'] = records_to_append['Facility']
             records_to_append = records_to_append.drop('Facility', axis=1)
 
-        # Prepare the data to append with birthdate in column O
-        rows_to_append = []
-        for _, row in records_to_append.iterrows():
-            new_row = []
-            # Add standard columns A-J
-            for col in STANDARD_COLUMNS:
-                new_row.append(row.get(col, ''))
+        # Add placeholder columns if they don't exist
+        for i in range(1, 5):
+            placeholder_col = f'Placeholder{i}'
+            if placeholder_col not in records_to_append.columns:
+                records_to_append[placeholder_col] = ''
             
-            # Add empty columns K-N
-            new_row.extend([''] * 4)
-            
-            # Add Birthdate in column O
-            new_row.append(row.get('Birthdate', ''))
-            
-            rows_to_append.append(new_row)
+        # Reorder columns to match required order
+        records_to_append = records_to_append[UPLOAD_COLUMNS]
 
+        # Prepare records for upload (replace NaN with empty string)
+        records_clean = records_to_append.fillna('')
+        
         # Get the last row with data
         last_row = len(worksheet.get_all_values())
         
         # Append new records starting from the next row
         worksheet.append_rows(
-            rows_to_append,
+            records_clean.values.tolist(),
             value_input_option='RAW',
             insert_data_option='INSERT_ROWS',
             table_range=f'A{last_row + 1}'
@@ -775,106 +752,106 @@ def main():
     uploaded_file = st.file_uploader("Choose an Excel file", type=['xlsx'])
     
     if uploaded_file is not None:
-        # Validate the file
-        is_valid, message, df = validate_file(uploaded_file)
-        
-        if is_valid:
+            # Validate the file
+            is_valid, message, df = validate_file(uploaded_file)
+            
+            if is_valid:
             # Show column mapping UI
             column_mapping, can_process = render_column_mapping_ui(df)
             
             if can_process and st.button("Process Data and Update Database"):
                 with st.spinner("Processing data and updating databases..."):
-                    # Store initial record count
-                    initial_records = len(df)
-                    
+                # Store initial record count
+                initial_records = len(df)
+                
                     # Process the data with column mapping
                     processed_df = process_data(df, column_mapping)
+                
+                # Load master database
+                master_df = load_master_db()
+                if master_df is None:
+                    st.error("Failed to load master database. Please check the connection.")
+                    return
+                
+                # Compare with master database
+                new_donors, updated_donors, really_updated = compare_dataframes(processed_df, master_df)
+                
+                # Update master database
+                final_master_df = update_master_database(master_df, new_donors, really_updated)
+                
+                # Get leads for upload
+                leads_df = get_leads_for_upload(new_donors, really_updated, master_df)
+                
+                # Save to databases
+                scope = ['https://spreadsheets.google.com/feeds',
+                        'https://www.googleapis.com/auth/drive']
+                credentials_dict = {
+                    "type": "service_account",
+                    "project_id": "third-hangout-387516",
+                    "private_key_id": st.secrets["private_key_id"],
+                    "private_key": st.secrets["google_credentials"],
+                    "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+                    "client_id": "114223947184571105588",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+                    "universe_domain": "googleapis.com"
+                }
+                
+                # Use the dictionary directly with from_json_keyfile_dict
+                credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+                gc = gspread.authorize(credentials)
+                spreadsheet_key = st.secrets["spreadsheet_key"]
+                workbook = gc.open_by_key(spreadsheet_key)
+                
+                # Save to master DB
+                worksheet = workbook.worksheet('DB')
+                success_master = save_to_gsheets(final_master_df, worksheet)
+                
+                # Save to upload process
+                success_upload = append_to_upload_process(new_donors, really_updated)
+                
+                if success_master and success_upload:
+                    st.success("✅ All databases updated successfully!")
                     
-                    # Load master database
-                    master_df = load_master_db()
-                    if master_df is None:
-                        st.error("Failed to load master database. Please check the connection.")
-                        return
+                    # Display statistics
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Total Records", initial_records)
+                    with col2:
+                        st.metric("Unique Donors", len(processed_df['Donor #'].unique()))
+                    with col3:
+                        st.metric("New Donors", len(new_donors))
+                    with col4:
+                        st.metric("Updated Records", len(really_updated))
+                    with col5:
+                        st.metric("Leads to Upload", len(leads_df))
                     
-                    # Compare with master database
-                    new_donors, updated_donors, really_updated = compare_dataframes(processed_df, master_df)
+                    # Show summary of changes
+                    if not new_donors.empty:
+                        st.markdown(f"### 🆕 New Donors: {len(new_donors)} records")
+                        st.write(f"Donor numbers: {', '.join(new_donors['Donor #'].astype(str))}")
                     
-                    # Update master database
-                    final_master_df = update_master_database(master_df, new_donors, really_updated)
+                    if not really_updated.empty:
+                        st.markdown(f"### 🔄 Updated Records: {len(really_updated)} records")
+                        st.write(f"Donor numbers: {', '.join(really_updated['Donor #'].astype(str))}")
                     
-                    # Get leads for upload
-                    leads_df = get_leads_for_upload(new_donors, really_updated, master_df)
-                    
-                    # Save to databases
-                    scope = ['https://spreadsheets.google.com/feeds',
-                            'https://www.googleapis.com/auth/drive']
-                    credentials_dict = {
-                        "type": "service_account",
-                        "project_id": "third-hangout-387516",
-                        "private_key_id": st.secrets["private_key_id"],
-                        "private_key": st.secrets["google_credentials"],
-                        "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-                        "client_id": "114223947184571105588",
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-                        "universe_domain": "googleapis.com"
-                    }
-                    
-                    # Use the dictionary directly with from_json_keyfile_dict
-                    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-                    gc = gspread.authorize(credentials)
-                    spreadsheet_key = st.secrets["spreadsheet_key"]
-                    workbook = gc.open_by_key(spreadsheet_key)
-                    
-                    # Save to master DB
-                    worksheet = workbook.worksheet('DB')
-                    success_master = save_to_gsheets(final_master_df, worksheet)
-                    
-                    # Save to upload process
-                    success_upload = append_to_upload_process(new_donors, really_updated)
-                    
-                    if success_master and success_upload:
-                        st.success("✅ All databases updated successfully!")
-                        
-                        # Display statistics
-                        col1, col2, col3, col4, col5 = st.columns(5)
-                        with col1:
-                            st.metric("Total Records", initial_records)
-                        with col2:
-                            st.metric("Unique Donors", len(processed_df['Donor #'].unique()))
-                        with col3:
-                            st.metric("New Donors", len(new_donors))
-                        with col4:
-                            st.metric("Updated Records", len(really_updated))
-                        with col5:
-                            st.metric("Leads to Upload", len(leads_df))
-                        
-                        # Show summary of changes
-                        if not new_donors.empty:
-                            st.markdown(f"### 🆕 New Donors: {len(new_donors)} records")
-                            st.write(f"Donor numbers: {', '.join(new_donors['Donor #'].astype(str))}")
-                        
-                        if not really_updated.empty:
-                            st.markdown(f"### 🔄 Updated Records: {len(really_updated)} records")
-                            st.write(f"Donor numbers: {', '.join(really_updated['Donor #'].astype(str))}")
-                        
-                        # Download options only for changed data
-                        if not leads_df.empty:
-                            st.markdown("### 📥 Download Options")
-                            csv_leads = leads_df.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Download Leads for Upload (CSV)",
-                                data=csv_leads,
-                                file_name="Olgam_Leads_For_Upload.csv",
-                                mime="text/csv",
-                                help="Download leads that need to be uploaded (new or updated phone/email)"
-                            )
-                    else:
-                        st.error("❌ Some updates failed. Please check the logs.")
-        else:
-            st.error("❌ " + message)
+                    # Download options only for changed data
+                    if not leads_df.empty:
+                        st.markdown("### 📥 Download Options")
+                        csv_leads = leads_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Leads for Upload (CSV)",
+                            data=csv_leads,
+                            file_name="Olgam_Leads_For_Upload.csv",
+                            mime="text/csv",
+                            help="Download leads that need to be uploaded (new or updated phone/email)"
+                        )
+                else:
+                    st.error("❌ Some updates failed. Please check the logs.")
+            else:
+                st.error("❌ " + message)
 
 if __name__ == "__main__":
     main() 
