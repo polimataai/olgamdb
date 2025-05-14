@@ -4,7 +4,6 @@ import re
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-from datetime import datetime
 
 # Force light theme and other configurations
 st.set_page_config(
@@ -122,22 +121,15 @@ REQUIRED_COLUMNS = [
     'Hour Checked In', 'Day Of The Week', 'Age', 'Check-In Time',
     'Check-Out Time (Adjusted)', 'Visit mins. (Adjusted)', 'Donor Address Line 1',
     'Donor Address Line 2', 'City', 'Zip Code', 'Donor Status', 'Qual. Status',
-    'Last 	Donation Date', 'Pure Plasma', 'Target Volume'
+    'Last 	Donation Date', 'Pure Plasma', 'Target Volume', 'Birthdate'
 ]
 
-# Define patterns for automatic column detection
-DONOR_NAME_PATTERNS = ['donor name', 'name', 'donor', 'full name']
-DONOR_EMAIL_PATTERNS = ['donor e-mail', 'email', 'donor email', 'e-mail']
-DONOR_ACCOUNT_PATTERNS = ['donor account #', 'account #', 'account number', 'donor acc']
-DONOR_PHONE_PATTERNS = ['donor phone', 'phone', 'telephone', 'contact', 'phone number']
-DONOR_NUMBER_PATTERNS = ['donor #', 'donor number', 'id', 'donor id']
-FACILITY_PATTERNS = ['facility', 'center', 'location', 'plasma center']
-ADDRESS1_PATTERNS = ['donor address line 1', 'address1', 'address line 1', 'address']
-ADDRESS2_PATTERNS = ['donor address line 2', 'address2', 'address line 2']
-CITY_PATTERNS = ['city', 'town', 'municipality']
-ZIP_PATTERNS = ['zip', 'zip code', 'postal code', 'postal']
-DONOR_STATUS_PATTERNS = ['donor status', 'status']
-BIRTHDATE_PATTERNS = ['birthdate', 'birth date', 'date of birth', 'dob', 'birth day']
+# Sheet column mapping
+SHEET_COLUMNS = [
+    'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
+    'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
+    'Birthdate'  # Added Birthdate as column 11 (which is column O in Google Sheets)
+]
 
 def find_column_by_pattern(columns, patterns):
     """Find the index of a column that best matches the given patterns."""
@@ -153,8 +145,8 @@ def find_column_by_pattern(columns, patterns):
             if pattern in str(col).lower():
                 return i
     
-    # Return first column as default if no match found
-    return 0 if columns else None
+    # Return first column as default
+    return 0
 
 def format_phone(phone):
     if pd.isna(phone):
@@ -191,91 +183,117 @@ def process_name(name):
     
     return first_name, last_name
 
-def format_birthdate(birthdate):
-    """Format birthdate to YYYY-MM-DD format for Google Sheets."""
-    if pd.isna(birthdate):
-        return None
-    
-    try:
-        # Try to convert to datetime
-        if isinstance(birthdate, str):
-            # Try common date formats
-            for fmt in ['%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d', '%Y/%m/%d', '%m-%d-%Y', '%d-%m-%Y']:
-                try:
-                    date_obj = datetime.strptime(birthdate, fmt)
-                    return date_obj.strftime('%Y-%m-%d')
-                except ValueError:
-                    continue
-        
-        # If it's already a datetime or date object
-        if hasattr(birthdate, 'strftime'):
-            return birthdate.strftime('%Y-%m-%d')
-        
-        # If all else fails, return as is
-        return str(birthdate)
-    except Exception:
-        return str(birthdate)
-
 def process_data(df, column_mapping):
-    """Process the data based on column mapping."""
-    # First, prepare the data using the provided column mapping
-    # Convert 'Last Donation Date' to datetime for proper comparison if it exists
-    if 'last_donation_date' in column_mapping and column_mapping['last_donation_date']:
-        df['Last 	Donation Date'] = pd.to_datetime(df[column_mapping['last_donation_date']], errors='coerce')
+    """
+    Process the data using the column mappings provided by the user.
     
-    # Sort by 'Last Donation Date' in descending order and remove duplicates
-    # keeping the first occurrence (which will be the most recent due to sorting)
-    # Now considering both Donor # and Facility for duplicates
-    if 'donor_number' in column_mapping and column_mapping['donor_number'] and 'facility' in column_mapping and column_mapping['facility'] and 'last_donation_date' in column_mapping and column_mapping['last_donation_date']:
-        df = df.sort_values('Last 	Donation Date', ascending=False).drop_duplicates(subset=[column_mapping['donor_number'], column_mapping['facility']])
+    Args:
+        df: DataFrame with the uploaded data
+        column_mapping: Dict mapping required columns to actual columns in the dataframe
+    """
+    # Rename the columns according to the mapping for easier processing
+    # This creates a working copy with our standard column names
+    working_df = df.copy()
+    
+    # Convert relevant columns based on mappings
+    if 'donor_number' in column_mapping:
+        working_df['Donor #'] = df[column_mapping['donor_number']].astype(str)
+    
+    if 'donor_name' in column_mapping:
+        working_df['Donor Name'] = df[column_mapping['donor_name']]
+    
+    if 'donor_email' in column_mapping:
+        working_df['Donor E-mail'] = df[column_mapping['donor_email']]
+    
+    if 'donor_account' in column_mapping:
+        working_df['Donor Account #'] = df[column_mapping['donor_account']]
+    
+    if 'donor_phone' in column_mapping:
+        working_df['Donor Phone'] = df[column_mapping['donor_phone']]
+    
+    if 'facility' in column_mapping:
+        working_df['Facility'] = df[column_mapping['facility']]
+    
+    if 'address_line1' in column_mapping:
+        working_df['Donor Address Line 1'] = df[column_mapping['address_line1']]
+    
+    if 'address_line2' in column_mapping:
+        working_df['Donor Address Line 2'] = df[column_mapping['address_line2']]
+    
+    if 'city' in column_mapping:
+        working_df['City'] = df[column_mapping['city']]
+    
+    if 'zip_code' in column_mapping:
+        working_df['Zip Code'] = df[column_mapping['zip_code']]
+    
+    if 'donor_status' in column_mapping:
+        working_df['Donor Status'] = df[column_mapping['donor_status']]
+    
+    if 'last_donation_date' in column_mapping:
+        working_df['Last 	Donation Date'] = pd.to_datetime(df[column_mapping['last_donation_date']], errors='coerce')
+    
+    if 'birthdate' in column_mapping:
+        working_df['Birthdate'] = pd.to_datetime(df[column_mapping['birthdate']], errors='coerce')
+    
+    # First, convert 'Last Donation Date' to datetime for proper comparison if it exists
+    if 'Last 	Donation Date' in working_df.columns:
+        working_df['Last 	Donation Date'] = pd.to_datetime(working_df['Last 	Donation Date'], errors='coerce')
+    
+    # Sort by 'Last Donation Date' in descending order and remove duplicates if it exists
+    if 'Last 	Donation Date' in working_df.columns and 'Donor #' in working_df.columns:
+        working_df = working_df.sort_values('Last 	Donation Date', ascending=False).drop_duplicates(subset=['Donor #', 'Facility'])
+    elif 'Donor #' in working_df.columns:
+        # Just remove duplicates without sorting if we don't have the date column
+        working_df = working_df.drop_duplicates(subset=['Donor #', 'Facility'])
     
     # Create a new DataFrame with only required columns
     processed_df = pd.DataFrame()
     
     # Copy basic columns and preserve Donor # exactly as is
-    if 'donor_number' in column_mapping and column_mapping['donor_number']:
-        processed_df['Donor #'] = df[column_mapping['donor_number']]
+    if 'Donor #' in working_df.columns:
+        processed_df['Donor #'] = working_df['Donor #']
     
-    if 'donor_account' in column_mapping and column_mapping['donor_account']:
-        processed_df['Donor Account #'] = df[column_mapping['donor_account']]
+    if 'Donor Account #' in working_df.columns:
+        processed_df['Donor Account #'] = working_df['Donor Account #']
     
-    if 'zip_code' in column_mapping and column_mapping['zip_code']:
-        processed_df['Zip Code'] = df[column_mapping['zip_code']]
+    if 'Zip Code' in working_df.columns:
+        processed_df['Zip Code'] = working_df['Zip Code']
     
-    if 'donor_status' in column_mapping and column_mapping['donor_status']:
-        processed_df['Donor Status'] = df[column_mapping['donor_status']]
+    if 'Donor Status' in working_df.columns:
+        processed_df['Donor Status'] = working_df['Donor Status']
     
-    if 'facility' in column_mapping and column_mapping['facility']:
-        processed_df['Facility'] = df[column_mapping['facility']]
+    if 'Facility' in working_df.columns:
+        processed_df['Facility'] = working_df['Facility']
     
-    # Process names
-    if 'donor_name' in column_mapping and column_mapping['donor_name']:
-        names = df[column_mapping['donor_name']].apply(process_name)
-    processed_df['Donor First'] = names.apply(lambda x: x[0])
-    processed_df['Donor Last'] = names.apply(lambda x: x[1])
+    # Process names if donor name column exists
+    if 'Donor Name' in working_df.columns:
+        names = working_df['Donor Name'].apply(process_name)
+        processed_df['Donor First'] = names.apply(lambda x: x[0])
+        processed_df['Donor Last'] = names.apply(lambda x: x[1])
     
-    # Process email
-    if 'donor_email' in column_mapping and column_mapping['donor_email']:
-        processed_df['Donor E-mail'] = df[column_mapping['donor_email']].str.lower()
-    # Remove both types of invalid emails
-    invalid_emails = ['someone@plasmaworld.com', 'someone@plasma.com', 'some@plasmaworld.com','someone@plasmaworld.om', 'na@na.com', 'someoneinplasma@gmail.com', 'someoneinplasma@gmail.com']
-    processed_df.loc[processed_df['Donor E-mail'].isin(invalid_emails), 'Donor E-mail'] = None
+    # Process email if it exists
+    if 'Donor E-mail' in working_df.columns:
+        processed_df['Donor E-mail'] = working_df['Donor E-mail'].str.lower()
+        # Remove both types of invalid emails
+        invalid_emails = ['someone@plasmaworld.com', 'someone@plasma.com', 'some@plasmaworld.com',
+                         'someone@plasmaworld.om', 'na@na.com', 'someoneinplasma@gmail.com', 'someoneinplasma@gmail.com']
+        processed_df.loc[processed_df['Donor E-mail'].isin(invalid_emails), 'Donor E-mail'] = None
     
-    # Process phone
-    if 'donor_phone' in column_mapping and column_mapping['donor_phone']:
-        processed_df['Donor Phone'] = df[column_mapping['donor_phone']].apply(format_phone)
+    # Process phone if it exists
+    if 'Donor Phone' in working_df.columns:
+        processed_df['Donor Phone'] = working_df['Donor Phone'].apply(format_phone)
     
-    # Combine addresses
-    if 'address_line1' in column_mapping and column_mapping['address_line1'] and 'address_line2' in column_mapping and column_mapping['address_line2']:
-        processed_df['Donor Address'] = df[column_mapping['address_line1']].fillna('') + ' ' + df[column_mapping['address_line2']].fillna('')
-    processed_df['Donor Address'] = processed_df['Donor Address'].str.strip()
-    elif 'address_line1' in column_mapping and column_mapping['address_line1']:
-        processed_df['Donor Address'] = df[column_mapping['address_line1']].fillna('')
-    
-    # Process birthdate
-    if 'birthdate' in column_mapping and column_mapping['birthdate']:
-        processed_df['Birthdate'] = df[column_mapping['birthdate']].apply(format_birthdate)
+    # Combine addresses if they exist
+    if 'Donor Address Line 1' in working_df.columns or 'Donor Address Line 2' in working_df.columns:
+        address1 = working_df.get('Donor Address Line 1', pd.Series([''] * len(working_df))).fillna('')
+        address2 = working_df.get('Donor Address Line 2', pd.Series([''] * len(working_df))).fillna('')
+        processed_df['Donor Address'] = address1 + ' ' + address2
+        processed_df['Donor Address'] = processed_df['Donor Address'].str.strip()
 
+    # Add birthdate if it exists
+    if 'Birthdate' in working_df.columns:
+        processed_df['Birthdate'] = working_df['Birthdate']
+    
     # Reset index
     processed_df = processed_df.reset_index(drop=True)
     
@@ -287,145 +305,17 @@ def validate_file(file):
         return False, "Please upload an Excel file (.xlsx)", None
     
     try:
-        # Read the Excel file with Donor # as string
-        df = pd.read_excel(
-            file,
-            dtype={'Donor #': str}  # Force Donor # to be read as string
-        )
+        # Read the Excel file with Donor # as string if it exists
+        df = pd.read_excel(file)
         
-        return True, "File structure is valid!", df
+        # Check if file contains any data
+        if df.empty:
+            return False, "The uploaded file is empty", None
+            
+        return True, "File loaded successfully!", df
     
     except Exception as e:
         return False, f"Error reading file: {str(e)}", None
-
-def render_column_mapping_ui(df):
-    """Render UI for column mapping."""
-    st.markdown("### Map Columns")
-    
-    # Add helpful instructions
-    with st.expander("Instructions for Column Mapping", expanded=True):
-        st.markdown("""
-        **How to Map Columns:**
-        
-        1. Select the appropriate columns from your data for each required field.
-        2. If a field doesn't exist in your data, leave it as is.
-        3. The birthdate field is new and will be stored in the Google Sheet.
-        4. After mapping columns, click "Process Data" to continue.
-        """)
-    
-    # Get column names from dataframe
-    columns = df.columns.tolist()
-    
-    # Find default column indices
-    donor_name_idx = find_column_by_pattern(columns, DONOR_NAME_PATTERNS)
-    donor_email_idx = find_column_by_pattern(columns, DONOR_EMAIL_PATTERNS)
-    donor_account_idx = find_column_by_pattern(columns, DONOR_ACCOUNT_PATTERNS)
-    donor_phone_idx = find_column_by_pattern(columns, DONOR_PHONE_PATTERNS)
-    donor_number_idx = find_column_by_pattern(columns, DONOR_NUMBER_PATTERNS)
-    facility_idx = find_column_by_pattern(columns, FACILITY_PATTERNS)
-    address1_idx = find_column_by_pattern(columns, ADDRESS1_PATTERNS)
-    address2_idx = find_column_by_pattern(columns, ADDRESS2_PATTERNS)
-    city_idx = find_column_by_pattern(columns, CITY_PATTERNS)
-    zip_idx = find_column_by_pattern(columns, ZIP_PATTERNS)
-    donor_status_idx = find_column_by_pattern(columns, DONOR_STATUS_PATTERNS)
-    birthdate_idx = find_column_by_pattern(columns, BIRTHDATE_PATTERNS)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    column_mapping = {}
-    
-    with col1:
-        column_mapping['donor_name'] = st.selectbox(
-            "Donor Name Column", 
-            options=[""] + columns,
-            index=donor_name_idx + 1 if donor_name_idx is not None else 0
-        )
-        
-        column_mapping['donor_email'] = st.selectbox(
-            "Donor Email Column", 
-            options=[""] + columns,
-            index=donor_email_idx + 1 if donor_email_idx is not None else 0
-        )
-        
-        column_mapping['donor_account'] = st.selectbox(
-            "Donor Account Column", 
-            options=[""] + columns,
-            index=donor_account_idx + 1 if donor_account_idx is not None else 0
-        )
-        
-        column_mapping['donor_phone'] = st.selectbox(
-            "Donor Phone Column", 
-            options=[""] + columns,
-            index=donor_phone_idx + 1 if donor_phone_idx is not None else 0
-        )
-    
-    with col2:
-        column_mapping['donor_number'] = st.selectbox(
-            "Donor # Column", 
-            options=[""] + columns,
-            index=donor_number_idx + 1 if donor_number_idx is not None else 0
-        )
-        
-        column_mapping['facility'] = st.selectbox(
-            "Facility Column", 
-            options=[""] + columns,
-            index=facility_idx + 1 if facility_idx is not None else 0
-        )
-        
-        column_mapping['address_line1'] = st.selectbox(
-            "Address Line 1 Column", 
-            options=[""] + columns,
-            index=address1_idx + 1 if address1_idx is not None else 0
-        )
-        
-        column_mapping['address_line2'] = st.selectbox(
-            "Address Line 2 Column", 
-            options=[""] + columns,
-            index=address2_idx + 1 if address2_idx is not None else 0
-        )
-    
-    with col3:
-        column_mapping['city'] = st.selectbox(
-            "City Column", 
-            options=[""] + columns,
-            index=city_idx + 1 if city_idx is not None else 0
-        )
-        
-        column_mapping['zip_code'] = st.selectbox(
-            "Zip Code Column", 
-            options=[""] + columns,
-            index=zip_idx + 1 if zip_idx is not None else 0
-        )
-        
-        column_mapping['donor_status'] = st.selectbox(
-            "Donor Status Column", 
-            options=[""] + columns,
-            index=donor_status_idx + 1 if donor_status_idx is not None else 0
-        )
-        
-        column_mapping['birthdate'] = st.selectbox(
-            "Birthdate Column (New)", 
-            options=[""] + columns,
-            index=birthdate_idx + 1 if birthdate_idx is not None else 0
-        )
-    
-    # Empty strings should be None
-    for key in column_mapping:
-        if column_mapping[key] == "":
-            column_mapping[key] = None
-    
-    # Check for required mapping
-    required_fields = ['donor_name', 'donor_number', 'facility']
-    missing_required = [field for field in required_fields if not column_mapping.get(field)]
-    
-    if missing_required:
-        st.warning(f"⚠️ The following required fields are not mapped: {', '.join(missing_required)}")
-        st.info("Please select a column for each required field to continue.")
-        can_process = False
-    else:
-        can_process = True
-    
-    return column_mapping, can_process
 
 def load_master_db():
     """Load the master database from Google Sheets."""
@@ -457,8 +347,8 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        headers = all_values[0][:15]  # Updated to include up to column O (Birthdate)
-        data = [row[:15] for row in all_values[1:]]
+        headers = all_values[0][:10]
+        data = [row[:10] for row in all_values[1:]]
         master_df = pd.DataFrame(data, columns=headers)
         return master_df
     except Exception as e:
@@ -468,30 +358,16 @@ def load_master_db():
 def compare_dataframes(processed_df, master_df):
     """Compare processed data with master database to find new and updated records."""
     # Ensure both dataframes have the same column names
-    master_columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
-                      'Donor Account #', 'Donor Phone', 'Donor Address', 
-                      'Zip Code', 'Donor Status', 'Center']
-    
-    # Add placeholder columns if present in master_df
-    for i in range(1, 5):
-        placeholder_col = f'Placeholder{i}'
-        if placeholder_col in master_df.columns:
-            master_columns.append(placeholder_col)
-    
-    # Add Birthdate column
-    master_columns.append('Birthdate')
-    
-    # Use only available columns from master_df
-    available_columns = [col for col in master_columns if col in master_df.columns]
-    master_df = master_df[available_columns]
+    master_df.columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
+                        'Donor Account #', 'Donor Phone', 'Donor Address', 
+                        'Zip Code', 'Donor Status', 'Center', 'Birthdate']
     
     # Convert master_df Donor # to string for comparison
     master_df['Donor #'] = master_df['Donor #'].astype(str)
     
     # Create a composite key for comparison
     processed_df['composite_key'] = processed_df['Donor #'] + '_' + processed_df['Facility']
-    if 'Center' in master_df.columns:
-        master_df['composite_key'] = master_df['Donor #'] + '_' + master_df['Center']
+    master_df['composite_key'] = master_df['Donor #'] + '_' + master_df['Center']
     
     # Find new records (donors that don't exist in master_df based on composite key)
     new_donors = processed_df[~processed_df['composite_key'].isin(master_df['composite_key'])]
@@ -524,41 +400,70 @@ def compare_dataframes(processed_df, master_df):
     # Apply standardization to relevant fields
     fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']
     for field in fields_to_compare:
+        # Only process fields that exist in both dataframes
         if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
             comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
             comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
     
     # Check for changes in specific fields (ignoring format)
-    updated_mask = (
-        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
-        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
-        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-        (comparison_df['Center_new'] != comparison_df['Center_master'])
-    )
+    # Create the condition based on fields that exist
+    update_conditions = []
+    if 'Donor E-mail_new' in comparison_df.columns and 'Donor E-mail_master' in comparison_df.columns:
+        update_conditions.append(comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master'])
     
-    # Add birthdate comparison if it exists in both dataframes
+    if 'Donor Phone_new' in comparison_df.columns and 'Donor Phone_master' in comparison_df.columns:
+        update_conditions.append(comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master'])
+    
+    if 'Donor Address_new' in comparison_df.columns and 'Donor Address_master' in comparison_df.columns:
+        update_conditions.append(comparison_df['Donor Address_new'] != comparison_df['Donor Address_master'])
+    
+    if 'Center_new' in comparison_df.columns and 'Center_master' in comparison_df.columns:
+        update_conditions.append(comparison_df['Center_new'] != comparison_df['Center_master'])
+    
     if 'Birthdate_new' in comparison_df.columns and 'Birthdate_master' in comparison_df.columns:
-        updated_mask = updated_mask | (comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])
+        update_conditions.append(comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])
+    
+    # Combine all conditions with OR
+    if update_conditions:
+        updated_mask = update_conditions[0]
+        for condition in update_conditions[1:]:
+            updated_mask = updated_mask | condition
+    else:
+        updated_mask = pd.Series([False] * len(comparison_df))
     
     # Get updated records using the correct column name (Donor #_new)
     updated_donors = existing_donors[existing_donors['Donor #'].isin(
         comparison_df[updated_mask]['Donor #_new']
     )]
     
-    # Create really_updated DataFrame for records with specific changes
-    really_updated_mask = (
-        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
-        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
-        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-        (comparison_df['Center_new'] != comparison_df['Center_master'])
-    )
+    # Create condition for really_updated
+    really_update_conditions = []
+    if 'Donor E-mail_new' in comparison_df.columns and 'Donor E-mail_master' in comparison_df.columns:
+        really_update_conditions.append(comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master'])
     
-    # Add birthdate comparison if it exists in both dataframes
+    if 'Donor Phone_new' in comparison_df.columns and 'Donor Phone_master' in comparison_df.columns:
+        really_update_conditions.append(comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master'])
+    
+    if 'Donor Address_new' in comparison_df.columns and 'Donor Address_master' in comparison_df.columns:
+        really_update_conditions.append(comparison_df['Donor Address_new'] != comparison_df['Donor Address_master'])
+    
+    if 'Center_new' in comparison_df.columns and 'Center_master' in comparison_df.columns:
+        really_update_conditions.append(comparison_df['Center_new'] != comparison_df['Center_master'])
+    
     if 'Birthdate_new' in comparison_df.columns and 'Birthdate_master' in comparison_df.columns:
-        really_updated_mask = really_updated_mask | (comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])
+        really_update_conditions.append(comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])
     
+    # Combine all conditions with OR
+    if really_update_conditions:
+        really_update_mask = really_update_conditions[0]
+        for condition in really_update_conditions[1:]:
+            really_update_mask = really_update_mask | condition
+    else:
+        really_update_mask = pd.Series([False] * len(comparison_df))
+    
+    # Create really_updated DataFrame for records with specific changes
     really_updated = existing_donors[existing_donors['Donor #'].isin(
-        comparison_df[really_updated_mask]['Donor #_new']
+        comparison_df[really_update_mask]['Donor #_new']
     )]
     
     # Remove the temporary composite key columns before returning
@@ -574,8 +479,8 @@ def update_master_database(master_df, new_donors, really_updated):
     # Define the correct column order
     SHEET_COLUMNS = [
         'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
-        'Placeholder1', 'Placeholder2', 'Placeholder3', 'Placeholder4', 'Birthdate'
+        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
+        'Birthdate'  # Added Birthdate as column 11 (which is column O in Google Sheets)
     ]
     
     # Create a copy of master_df to avoid modifying the original
@@ -606,13 +511,13 @@ def update_master_database(master_df, new_donors, really_updated):
     
     final_master_df = pd.concat(frames_to_concat, ignore_index=True)
     
-    # Add placeholder columns if they don't exist
-    for i in range(1, 5):
-        placeholder_col = f'Placeholder{i}'
-        if placeholder_col not in final_master_df.columns:
-            final_master_df[placeholder_col] = ''
-    
     # Reorder columns to match Google Sheets
+    # Make sure all required columns exist
+    for col in SHEET_COLUMNS:
+        if col not in final_master_df.columns:
+            final_master_df[col] = ""
+    
+    # Reorder columns
     final_master_df = final_master_df[SHEET_COLUMNS]
     
     return final_master_df
@@ -648,10 +553,13 @@ def get_leads_for_upload(new_donors, really_updated, master_df):
         # Standardize values for comparison
         new_phone = str(row['Donor Phone']).lower().strip() if pd.notna(row['Donor Phone']) else ''
         new_email = str(row['Donor E-mail']).lower().strip() if pd.notna(row['Donor E-mail']) else ''
+        new_birthdate = str(row['Birthdate']).lower().strip() if 'Birthdate' in row and pd.notna(row['Birthdate']) else ''
+        
         master_phone = str(master_record['Donor Phone']).lower().strip() if pd.notna(master_record['Donor Phone']) else ''
         master_email = str(master_record['Donor E-mail']).lower().strip() if pd.notna(master_record['Donor E-mail']) else ''
+        master_birthdate = str(master_record['Birthdate']).lower().strip() if 'Birthdate' in master_record and pd.notna(master_record['Birthdate']) else ''
         
-        return new_phone != master_phone or new_email != master_email
+        return new_phone != master_phone or new_email != master_email or new_birthdate != master_birthdate
     
     # Combine new donors and really updated records
     if not new_donors.empty:
@@ -693,8 +601,8 @@ def append_to_upload_process(new_donors, really_updated):
         # Define the correct column order
         UPLOAD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
-            'Placeholder1', 'Placeholder2', 'Placeholder3', 'Placeholder4', 'Birthdate'
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
+            'Birthdate'  # Added Birthdate
         ]
 
         # Combine new and updated records
@@ -707,12 +615,11 @@ def append_to_upload_process(new_donors, really_updated):
             records_to_append['Center'] = records_to_append['Facility']
             records_to_append = records_to_append.drop('Facility', axis=1)
 
-        # Add placeholder columns if they don't exist
-        for i in range(1, 5):
-            placeholder_col = f'Placeholder{i}'
-            if placeholder_col not in records_to_append.columns:
-                records_to_append[placeholder_col] = ''
-            
+        # Make sure all required columns exist
+        for col in UPLOAD_COLUMNS:
+            if col not in records_to_append.columns:
+                records_to_append[col] = ""
+
         # Reorder columns to match required order
         records_to_append = records_to_append[UPLOAD_COLUMNS]
 
@@ -735,6 +642,191 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Error appending to UPLOAD_PROCESS: {str(e)}")
         return False
 
+def render_column_mapping_ui(df):
+    """
+    Render UI for column mapping.
+    Returns a dictionary mapping standard field names to actual column names in the uploaded file.
+    """
+    st.markdown("### Map Columns")
+    
+    with st.expander("Instructions for Column Mapping", expanded=True):
+        st.markdown("""
+        **Please map the columns from your file to our required fields:**
+        
+        - Select the appropriate column from your file for each required field
+        - Fields marked with * are required
+        - The application will try to detect appropriate columns automatically
+        - Make sure to map Birthdate column if available
+        """)
+    
+    # Get column names from dataframe
+    columns = df.columns.tolist()
+    
+    # Define patterns for automatic column detection
+    donor_number_patterns = ['donor #', 'donor number', 'id', 'donor id']
+    donor_name_patterns = ['donor name', 'donor', 'name', 'full name']
+    donor_email_patterns = ['donor e-mail', 'email', 'e-mail', 'donor email']
+    donor_account_patterns = ['donor account #', 'account', 'donor account', 'account number']
+    donor_phone_patterns = ['donor phone', 'phone', 'phone number', 'contact', 'telephone']
+    facility_patterns = ['facility', 'center', 'location', 'center code', 'facility code']
+    address1_patterns = ['donor address line 1', 'address 1', 'address line 1', 'address']
+    address2_patterns = ['donor address line 2', 'address 2', 'address line 2']
+    city_patterns = ['city', 'town']
+    zip_code_patterns = ['zip code', 'zip', 'postal code', 'postal']
+    donor_status_patterns = ['donor status', 'status']
+    last_donation_date_patterns = ['last donation date', 'previous donation', 'last donation']
+    birthdate_patterns = ['birthdate', 'birth date', 'date of birth', 'dob', 'birth']
+    
+    # Find default column indices
+    donor_number_default = find_column_by_pattern(columns, donor_number_patterns)
+    donor_name_default = find_column_by_pattern(columns, donor_name_patterns)
+    donor_email_default = find_column_by_pattern(columns, donor_email_patterns)
+    donor_account_default = find_column_by_pattern(columns, donor_account_patterns)
+    donor_phone_default = find_column_by_pattern(columns, donor_phone_patterns)
+    facility_default = find_column_by_pattern(columns, facility_patterns)
+    address1_default = find_column_by_pattern(columns, address1_patterns)
+    address2_default = find_column_by_pattern(columns, address2_patterns)
+    city_default = find_column_by_pattern(columns, city_patterns)
+    zip_code_default = find_column_by_pattern(columns, zip_code_patterns)
+    donor_status_default = find_column_by_pattern(columns, donor_status_patterns)
+    last_donation_date_default = find_column_by_pattern(columns, last_donation_date_patterns)
+    birthdate_default = find_column_by_pattern(columns, birthdate_patterns)
+    
+    # Create 3 columns for the UI
+    col1, col2, col3 = st.columns(3)
+    
+    # Create mapping
+    column_mapping = {}
+    
+    with col1:
+        st.subheader("Basic Information")
+        donor_number_col = st.selectbox(
+            "Donor # *", 
+            options=["-- None --"] + columns,
+            index=donor_number_default + 1 if donor_number_default >= 0 else 0
+        )
+        if donor_number_col != "-- None --":
+            column_mapping['donor_number'] = donor_number_col
+        
+        donor_name_col = st.selectbox(
+            "Donor Name *", 
+            options=["-- None --"] + columns,
+            index=donor_name_default + 1 if donor_name_default >= 0 else 0
+        )
+        if donor_name_col != "-- None --":
+            column_mapping['donor_name'] = donor_name_col
+        
+        donor_email_col = st.selectbox(
+            "Donor E-mail", 
+            options=["-- None --"] + columns,
+            index=donor_email_default + 1 if donor_email_default >= 0 else 0
+        )
+        if donor_email_col != "-- None --":
+            column_mapping['donor_email'] = donor_email_col
+        
+        donor_account_col = st.selectbox(
+            "Donor Account #", 
+            options=["-- None --"] + columns,
+            index=donor_account_default + 1 if donor_account_default >= 0 else 0
+        )
+        if donor_account_col != "-- None --":
+            column_mapping['donor_account'] = donor_account_col
+        
+        donor_phone_col = st.selectbox(
+            "Donor Phone", 
+            options=["-- None --"] + columns,
+            index=donor_phone_default + 1 if donor_phone_default >= 0 else 0
+        )
+        if donor_phone_col != "-- None --":
+            column_mapping['donor_phone'] = donor_phone_col
+    
+    with col2:
+        st.subheader("Location Information")
+        facility_col = st.selectbox(
+            "Facility *", 
+            options=["-- None --"] + columns,
+            index=facility_default + 1 if facility_default >= 0 else 0
+        )
+        if facility_col != "-- None --":
+            column_mapping['facility'] = facility_col
+        
+        address1_col = st.selectbox(
+            "Address Line 1", 
+            options=["-- None --"] + columns,
+            index=address1_default + 1 if address1_default >= 0 else 0
+        )
+        if address1_col != "-- None --":
+            column_mapping['address_line1'] = address1_col
+        
+        address2_col = st.selectbox(
+            "Address Line 2", 
+            options=["-- None --"] + columns,
+            index=address2_default + 1 if address2_default >= 0 else 0
+        )
+        if address2_col != "-- None --":
+            column_mapping['address_line2'] = address2_col
+        
+        city_col = st.selectbox(
+            "City", 
+            options=["-- None --"] + columns,
+            index=city_default + 1 if city_default >= 0 else 0
+        )
+        if city_col != "-- None --":
+            column_mapping['city'] = city_col
+        
+        zip_code_col = st.selectbox(
+            "Zip Code", 
+            options=["-- None --"] + columns,
+            index=zip_code_default + 1 if zip_code_default >= 0 else 0
+        )
+        if zip_code_col != "-- None --":
+            column_mapping['zip_code'] = zip_code_col
+    
+    with col3:
+        st.subheader("Additional Information")
+        donor_status_col = st.selectbox(
+            "Donor Status", 
+            options=["-- None --"] + columns,
+            index=donor_status_default + 1 if donor_status_default >= 0 else 0
+        )
+        if donor_status_col != "-- None --":
+            column_mapping['donor_status'] = donor_status_col
+        
+        last_donation_date_col = st.selectbox(
+            "Last Donation Date", 
+            options=["-- None --"] + columns,
+            index=last_donation_date_default + 1 if last_donation_date_default >= 0 else 0
+        )
+        if last_donation_date_col != "-- None --":
+            column_mapping['last_donation_date'] = last_donation_date_col
+            
+        birthdate_col = st.selectbox(
+            "Birthdate", 
+            options=["-- None --"] + columns,
+            index=birthdate_default + 1 if birthdate_default >= 0 else 0
+        )
+        if birthdate_col != "-- None --":
+            column_mapping['birthdate'] = birthdate_col
+            # Show sample data for birthdate
+            if not df.empty and birthdate_col in df.columns:
+                st.markdown("**Birthdate Examples:**")
+                birthdate_samples = df[birthdate_col].dropna().head(3)
+                if not birthdate_samples.empty:
+                    for idx, sample in enumerate(birthdate_samples):
+                        st.text(f"Example {idx+1}: {sample}")
+                else:
+                    st.text("No birthdate examples found in data")
+    
+    # Validation
+    required_fields = ['donor_number', 'donor_name', 'facility']
+    missing_fields = [field for field in required_fields if field not in column_mapping]
+    
+    if missing_fields:
+        st.warning(f"⚠️ Missing required fields: {', '.join(missing_fields)}")
+        return None
+    
+    return column_mapping
+
 def main():
     if not check_password():
         st.error("⚠️ Password incorrect. Please try again.")
@@ -752,106 +844,108 @@ def main():
     uploaded_file = st.file_uploader("Choose an Excel file", type=['xlsx'])
     
     if uploaded_file is not None:
-            # Validate the file
-            is_valid, message, df = validate_file(uploaded_file)
+        # Validate the file
+        is_valid, message, df = validate_file(uploaded_file)
+        
+        if is_valid:
+            # Store initial record count
+            initial_records = len(df)
             
-            if is_valid:
             # Show column mapping UI
-            column_mapping, can_process = render_column_mapping_ui(df)
+            column_mapping = render_column_mapping_ui(df)
             
-            if can_process and st.button("Process Data and Update Database"):
-                with st.spinner("Processing data and updating databases..."):
-                # Store initial record count
-                initial_records = len(df)
-                
-                    # Process the data with column mapping
-                    processed_df = process_data(df, column_mapping)
-                
-                # Load master database
-                master_df = load_master_db()
-                if master_df is None:
-                    st.error("Failed to load master database. Please check the connection.")
-                    return
-                
-                # Compare with master database
-                new_donors, updated_donors, really_updated = compare_dataframes(processed_df, master_df)
-                
-                # Update master database
-                final_master_df = update_master_database(master_df, new_donors, really_updated)
-                
-                # Get leads for upload
-                leads_df = get_leads_for_upload(new_donors, really_updated, master_df)
-                
-                # Save to databases
-                scope = ['https://spreadsheets.google.com/feeds',
-                        'https://www.googleapis.com/auth/drive']
-                credentials_dict = {
-                    "type": "service_account",
-                    "project_id": "third-hangout-387516",
-                    "private_key_id": st.secrets["private_key_id"],
-                    "private_key": st.secrets["google_credentials"],
-                    "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-                    "client_id": "114223947184571105588",
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-                    "universe_domain": "googleapis.com"
-                }
-                
-                # Use the dictionary directly with from_json_keyfile_dict
-                credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-                gc = gspread.authorize(credentials)
-                spreadsheet_key = st.secrets["spreadsheet_key"]
-                workbook = gc.open_by_key(spreadsheet_key)
-                
-                # Save to master DB
-                worksheet = workbook.worksheet('DB')
-                success_master = save_to_gsheets(final_master_df, worksheet)
-                
-                # Save to upload process
-                success_upload = append_to_upload_process(new_donors, really_updated)
-                
-                if success_master and success_upload:
-                    st.success("✅ All databases updated successfully!")
-                    
-                    # Display statistics
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    with col1:
-                        st.metric("Total Records", initial_records)
-                    with col2:
-                        st.metric("Unique Donors", len(processed_df['Donor #'].unique()))
-                    with col3:
-                        st.metric("New Donors", len(new_donors))
-                    with col4:
-                        st.metric("Updated Records", len(really_updated))
-                    with col5:
-                        st.metric("Leads to Upload", len(leads_df))
-                    
-                    # Show summary of changes
-                    if not new_donors.empty:
-                        st.markdown(f"### 🆕 New Donors: {len(new_donors)} records")
-                        st.write(f"Donor numbers: {', '.join(new_donors['Donor #'].astype(str))}")
-                    
-                    if not really_updated.empty:
-                        st.markdown(f"### 🔄 Updated Records: {len(really_updated)} records")
-                        st.write(f"Donor numbers: {', '.join(really_updated['Donor #'].astype(str))}")
-                    
-                    # Download options only for changed data
-                    if not leads_df.empty:
-                        st.markdown("### 📥 Download Options")
-                        csv_leads = leads_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Download Leads for Upload (CSV)",
-                            data=csv_leads,
-                            file_name="Olgam_Leads_For_Upload.csv",
-                            mime="text/csv",
-                            help="Download leads that need to be uploaded (new or updated phone/email)"
-                        )
-                else:
-                    st.error("❌ Some updates failed. Please check the logs.")
-            else:
-                st.error("❌ " + message)
+            # Only proceed if column mapping is valid
+            if column_mapping:
+                if st.button("Process Data and Update Database"):
+                    with st.spinner("Processing data and updating databases..."):
+                        # Process the data
+                        processed_df = process_data(df, column_mapping)
+                        
+                        # Load master database
+                        master_df = load_master_db()
+                        if master_df is None:
+                            st.error("Failed to load master database. Please check the connection.")
+                            return
+                        
+                        # Compare with master database
+                        new_donors, updated_donors, really_updated = compare_dataframes(processed_df, master_df)
+                        
+                        # Update master database
+                        final_master_df = update_master_database(master_df, new_donors, really_updated)
+                        
+                        # Get leads for upload
+                        leads_df = get_leads_for_upload(new_donors, really_updated, master_df)
+                        
+                        # Save to databases
+                        scope = ['https://spreadsheets.google.com/feeds',
+                                'https://www.googleapis.com/auth/drive']
+                        credentials_dict = {
+                            "type": "service_account",
+                            "project_id": "third-hangout-387516",
+                            "private_key_id": st.secrets["private_key_id"],
+                            "private_key": st.secrets["google_credentials"],
+                            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+                            "client_id": "114223947184571105588",
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+                            "universe_domain": "googleapis.com"
+                        }
+                        
+                        # Use the dictionary directly with from_json_keyfile_dict
+                        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+                        gc = gspread.authorize(credentials)
+                        spreadsheet_key = st.secrets["spreadsheet_key"]
+                        workbook = gc.open_by_key(spreadsheet_key)
+                        
+                        # Save to master DB
+                        worksheet = workbook.worksheet('DB')
+                        success_master = save_to_gsheets(final_master_df, worksheet)
+                        
+                        # Save to upload process
+                        success_upload = append_to_upload_process(new_donors, really_updated)
+                        
+                        if success_master and success_upload:
+                            st.success("✅ All databases updated successfully!")
+                            
+                            # Display statistics
+                            col1, col2, col3, col4, col5 = st.columns(5)
+                            with col1:
+                                st.metric("Total Records", initial_records)
+                            with col2:
+                                st.metric("Unique Donors", len(processed_df['Donor #'].unique()) if 'Donor #' in processed_df.columns else 0)
+                            with col3:
+                                st.metric("New Donors", len(new_donors))
+                            with col4:
+                                st.metric("Updated Records", len(really_updated))
+                            with col5:
+                                st.metric("Leads to Upload", len(leads_df))
+                            
+                            # Show summary of changes
+                            if not new_donors.empty:
+                                st.markdown(f"### 🆕 New Donors: {len(new_donors)} records")
+                                st.write(f"Donor numbers: {', '.join(new_donors['Donor #'].astype(str))}")
+                            
+                            if not really_updated.empty:
+                                st.markdown(f"### 🔄 Updated Records: {len(really_updated)} records")
+                                st.write(f"Donor numbers: {', '.join(really_updated['Donor #'].astype(str))}")
+                            
+                            # Download options only for changed data
+                            if not leads_df.empty:
+                                st.markdown("### 📥 Download Options")
+                                csv_leads = leads_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Leads for Upload (CSV)",
+                                    data=csv_leads,
+                                    file_name="Olgam_Leads_For_Upload.csv",
+                                    mime="text/csv",
+                                    help="Download leads that need to be uploaded (new or updated phone/email)"
+                                )
+                        else:
+                            st.error("❌ Some updates failed. Please check the logs.")
+        else:
+            st.error("❌ " + message)
 
 if __name__ == "__main__":
     main() 
