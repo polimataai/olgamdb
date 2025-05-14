@@ -467,7 +467,7 @@ def append_to_upload_process(new_donors, really_updated):
         UPLOAD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
             'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
-            'Birthday', 'K', 'L', 'M', 'N'
+            'K', 'L', 'M', 'N', 'Birthday'
         ]
 
         # Combine new and updated records
