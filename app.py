@@ -114,21 +114,14 @@ def check_password():
     
     return st.session_state["password_correct"]
 
-# Define the required columns for the spreadsheet
-SHEET_COLUMNS = [
-    'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-    'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
-    'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate'  # Positioned Birthdate in column O (15th column)
-]
-
-# Define the required columns for file validation
+# Define the required columns
 REQUIRED_COLUMNS = [
     'Facility', 'Donor #', 'Donor Name', 'Donor E-mail', 'Donor Account #',
     'Donor Phone', 'Yield (ml)', 'Gender', 'Donation Date', 'Month',
     'Hour Checked In', 'Day Of The Week', 'Age', 'Check-In Time',
     'Check-Out Time (Adjusted)', 'Visit mins. (Adjusted)', 'Donor Address Line 1',
     'Donor Address Line 2', 'City', 'Zip Code', 'Donor Status', 'Qual. Status',
-    'Last 	Donation Date', 'Pure Plasma', 'Target Volume', 'Birthdate'  # Added Birthdate
+    'Last 	Donation Date', 'Pure Plasma', 'Target Volume', 'DOB'
 ]
 
 def format_phone(phone):
@@ -166,73 +159,54 @@ def process_name(name):
     
     return first_name, last_name
 
-def process_data(df, column_mapping):
+def process_data(df):
     # First, convert 'Last Donation Date' to datetime for proper comparison
-    last_donation_date_col = column_mapping.get('Last 	Donation Date', 'Last 	Donation Date')
-    df[last_donation_date_col] = pd.to_datetime(df[last_donation_date_col], errors='coerce')
+    df['Last 	Donation Date'] = pd.to_datetime(df['Last 	Donation Date'], errors='coerce')
     
     # Sort by 'Last Donation Date' in descending order and remove duplicates
     # keeping the first occurrence (which will be the most recent due to sorting)
     # Now considering both Donor # and Facility for duplicates
-    donor_num_col = column_mapping.get('Donor #', 'Donor #')
-    facility_col = column_mapping.get('Facility', 'Facility')
-    df = df.sort_values(last_donation_date_col, ascending=False).drop_duplicates(subset=[donor_num_col, facility_col])
+    df = df.sort_values('Last 	Donation Date', ascending=False).drop_duplicates(subset=['Donor #', 'Facility'])
     
     # Create a new DataFrame with only required columns
     processed_df = pd.DataFrame()
     
     # Copy basic columns and preserve Donor # exactly as is
-    processed_df['Donor #'] = df[donor_num_col]  # No need for extra conversion since it's already a string
+    processed_df['Donor #'] = df['Donor #']  # No need for extra conversion since it's already a string
     
-    processed_df['Donor Account #'] = df[column_mapping.get('Donor Account #', 'Donor Account #')]
-    processed_df['Zip Code'] = df[column_mapping.get('Zip Code', 'Zip Code')]
-    processed_df['Donor Status'] = df[column_mapping.get('Donor Status', 'Donor Status')]
-    processed_df['Facility'] = df[facility_col]
+    processed_df['Donor Account #'] = df['Donor Account #']
+    processed_df['Zip Code'] = df['Zip Code']
+    processed_df['Donor Status'] = df['Donor Status']
+    processed_df['Facility'] = df['Facility']
     
-    # Add birthdate column
-    processed_df['Birthdate'] = df[column_mapping.get('Birthdate', 'Birthdate')]
+    # Process DOB if present
+    if 'DOB' in df.columns:
+        processed_df['Birthday'] = df['DOB']
+    else:
+        processed_df['Birthday'] = 'x'  # Placeholder for missing DOB column
     
     # Process names
-    names = df[column_mapping.get('Donor Name', 'Donor Name')].apply(process_name)
+    names = df['Donor Name'].apply(process_name)
     processed_df['Donor First'] = names.apply(lambda x: x[0])
     processed_df['Donor Last'] = names.apply(lambda x: x[1])
     
     # Process email
-    processed_df['Donor E-mail'] = df[column_mapping.get('Donor E-mail', 'Donor E-mail')].str.lower()
+    processed_df['Donor E-mail'] = df['Donor E-mail'].str.lower()
     # Remove both types of invalid emails
     invalid_emails = ['someone@plasmaworld.com', 'someone@plasma.com', 'some@plasmaworld.com','someone@plasmaworld.om', 'na@na.com', 'someoneinplasma@gmail.com', 'someoneinplasma@gmail.com']
     processed_df.loc[processed_df['Donor E-mail'].isin(invalid_emails), 'Donor E-mail'] = None
     
     # Process phone
-    processed_df['Donor Phone'] = df[column_mapping.get('Donor Phone', 'Donor Phone')].apply(format_phone)
+    processed_df['Donor Phone'] = df['Donor Phone'].apply(format_phone)
     
     # Combine addresses
-    address_line1_col = column_mapping.get('Donor Address Line 1', 'Donor Address Line 1')
-    address_line2_col = column_mapping.get('Donor Address Line 2', 'Donor Address Line 2')
-    processed_df['Donor Address'] = df[address_line1_col].fillna('') + ' ' + df[address_line2_col].fillna('')
+    processed_df['Donor Address'] = df['Donor Address Line 1'].fillna('') + ' ' + df['Donor Address Line 2'].fillna('')
     processed_df['Donor Address'] = processed_df['Donor Address'].str.strip()
 
-    # Reset index
+    #reset index
     processed_df = processed_df.reset_index(drop=True)
     
     return processed_df
-
-def find_column_by_pattern(columns, patterns):
-    """Find the index of a column that best matches the given patterns."""
-    # Try exact match first
-    for pattern in patterns:
-        for i, col in enumerate(columns):
-            if str(col).lower() == pattern.lower():
-                return i
-    
-    # Then try contains match
-    for pattern in patterns:
-        for i, col in enumerate(columns):
-            if pattern.lower() in str(col).lower():
-                return i
-    
-    # Return first column as default
-    return 0
 
 def validate_file(file):
     # Check file extension
@@ -248,6 +222,12 @@ def validate_file(file):
         
         # Get the columns from the uploaded file
         file_columns = df.columns.tolist()
+        
+        # Check if all required columns are present
+        missing_columns = [col for col in REQUIRED_COLUMNS if col not in file_columns]
+        
+        if missing_columns:
+            return False, f"Missing required columns: {', '.join(missing_columns)}", None
         
         return True, "File structure is valid!", df
     
@@ -284,8 +264,8 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        headers = all_values[0][:15]  # Updated to include all columns up to O (15 columns)
-        data = [row[:15] for row in all_values[1:]]  # Updated to include all columns up to O
+        headers = all_values[0][:10]
+        data = [row[:10] for row in all_values[1:]]
         master_df = pd.DataFrame(data, columns=headers)
         return master_df
     except Exception as e:
@@ -297,8 +277,7 @@ def compare_dataframes(processed_df, master_df):
     # Ensure both dataframes have the same column names
     master_df.columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
                         'Donor Account #', 'Donor Phone', 'Donor Address', 
-                        'Zip Code', 'Donor Status', 'Center', 
-                        'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate']  # Updated column structure
+                        'Zip Code', 'Donor Status', 'Center', 'x', 'x', 'x', 'x', 'Birthday']
     
     # Convert master_df Donor # to string for comparison
     master_df['Donor #'] = master_df['Donor #'].astype(str)
@@ -336,7 +315,7 @@ def compare_dataframes(processed_df, master_df):
         return x
     
     # Apply standardization to relevant fields
-    fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']  # Updated to include Birthdate
+    fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthday']
     for field in fields_to_compare:
         comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
         comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
@@ -347,7 +326,7 @@ def compare_dataframes(processed_df, master_df):
         (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
         (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
         (comparison_df['Center_new'] != comparison_df['Center_master']) |
-        (comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])  # Updated to include Birthdate
+        (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
     )
     
     # Get updated records using the correct column name (Donor #_new)
@@ -362,7 +341,7 @@ def compare_dataframes(processed_df, master_df):
             (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
             (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
             (comparison_df['Center_new'] != comparison_df['Center_master']) |
-            (comparison_df['Birthdate_new'] != comparison_df['Birthdate_master'])  # Updated to include Birthdate
+            (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
         ]['Donor #_new']
     )]
     
@@ -380,7 +359,7 @@ def update_master_database(master_df, new_donors, really_updated):
     SHEET_COLUMNS = [
         'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
         'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
-        'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate'  # Positioned Birthdate in column O (15th column)
+        'x', 'x', 'x', 'x', 'Birthday'  # Added placeholders and Birthday column
     ]
     
     # Create a copy of master_df to avoid modifying the original
@@ -395,27 +374,20 @@ def update_master_database(master_df, new_donors, really_updated):
         really_updated_formatted = really_updated.copy()
         really_updated_formatted['Center'] = really_updated_formatted['Facility']
         really_updated_formatted = really_updated_formatted.drop('Facility', axis=1)
-        # Add placeholder columns to ensure Birthdate is in column O
-        really_updated_formatted['Column K'] = None
-        really_updated_formatted['Column L'] = None  
-        really_updated_formatted['Column M'] = None
-        really_updated_formatted['Column N'] = None
+        # Add placeholder columns
+        for col in ['x', 'x', 'x', 'x']:
+            if col not in really_updated_formatted.columns:
+                really_updated_formatted[col] = 'x'
     
     # Prepare new_donors records for concatenation
     if not new_donors.empty:
         new_donors_formatted = new_donors.copy()
         new_donors_formatted['Center'] = new_donors_formatted['Facility']
         new_donors_formatted = new_donors_formatted.drop('Facility', axis=1)
-        # Add placeholder columns to ensure Birthdate is in column O
-        new_donors_formatted['Column K'] = None
-        new_donors_formatted['Column L'] = None
-        new_donors_formatted['Column M'] = None
-        new_donors_formatted['Column N'] = None
-    
-    # Ensure master_df has all the required columns
-    for col in SHEET_COLUMNS:
-        if col not in updated_master_df.columns:
-            updated_master_df[col] = None
+        # Add placeholder columns
+        for col in ['x', 'x', 'x', 'x']:
+            if col not in new_donors_formatted.columns:
+                new_donors_formatted[col] = 'x'
     
     # Concatenate the dataframes
     frames_to_concat = [updated_master_df]
@@ -462,17 +434,19 @@ def get_leads_for_upload(new_donors, really_updated, master_df):
         # Standardize values for comparison
         new_phone = str(row['Donor Phone']).lower().strip() if pd.notna(row['Donor Phone']) else ''
         new_email = str(row['Donor E-mail']).lower().strip() if pd.notna(row['Donor E-mail']) else ''
+        new_birthday = str(row['Birthday']).lower().strip() if pd.notna(row['Birthday']) else ''
         master_phone = str(master_record['Donor Phone']).lower().strip() if pd.notna(master_record['Donor Phone']) else ''
         master_email = str(master_record['Donor E-mail']).lower().strip() if pd.notna(master_record['Donor E-mail']) else ''
+        master_birthday = str(master_record['Birthday']).lower().strip() if 'Birthday' in master_record and pd.notna(master_record['Birthday']) else ''
         
-        return new_phone != master_phone or new_email != master_email
+        return new_phone != master_phone or new_email != master_email or new_birthday != master_birthday
     
     # Combine new donors and really updated records
     if not new_donors.empty:
         leads_df = pd.concat([leads_df, new_donors])
     
     if not really_updated.empty:
-        # Filter really_updated for only those with phone or email changes
+        # Filter really_updated for only those with phone, email, or birthday changes
         important_updates = really_updated[really_updated.apply(lambda x: has_important_updates(x, master_df), axis=1)]
         leads_df = pd.concat([leads_df, important_updates])
     
@@ -507,8 +481,8 @@ def append_to_upload_process(new_donors, really_updated):
         # Define the correct column order
         UPLOAD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 
-            'Column K', 'Column L', 'Column M', 'Column N', 'Birthdate'  # Positioned Birthdate in column O
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center',
+            'x', 'x', 'x', 'x', 'Birthday'  # Added placeholders and Birthday column
         ]
 
         # Combine new and updated records
@@ -520,12 +494,11 @@ def append_to_upload_process(new_donors, really_updated):
         if 'Facility' in records_to_append.columns:
             records_to_append['Center'] = records_to_append['Facility']
             records_to_append = records_to_append.drop('Facility', axis=1)
-            
-        # Add placeholder columns to ensure Birthdate is in column O
-        records_to_append['Column K'] = None
-        records_to_append['Column L'] = None
-        records_to_append['Column M'] = None
-        records_to_append['Column N'] = None
+        
+        # Add placeholder columns
+        for col in ['x', 'x', 'x', 'x']:
+            if col not in records_to_append.columns:
+                records_to_append[col] = 'x'
 
         # Reorder columns to match required order
         records_to_append = records_to_append[UPLOAD_COLUMNS]
@@ -549,69 +522,6 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Error appending to UPLOAD_PROCESS: {str(e)}")
         return False
 
-def render_column_mapping_ui(df):
-    """Display column mapping UI for the user to match their columns to required fields."""
-    st.markdown("### Map Your Columns")
-    
-    # Define patterns for automatic column detection
-    column_patterns = {
-        'Donor #': ['donor #', 'donor num', 'donor number', 'id'],
-        'Donor Name': ['donor name', 'name', 'full name'],
-        'Donor E-mail': ['email', 'e-mail', 'donor email', 'donor e-mail'],
-        'Donor Account #': ['account', 'donor account', 'account number', 'donor account #'],
-        'Donor Phone': ['phone', 'telephone', 'donor phone', 'phone number'],
-        'Facility': ['facility', 'center', 'location', 'center name'],
-        'Donation Date': ['donation date', 'date', 'donation', 'drawn date'],
-        'Donor Address Line 1': ['address', 'address1', 'street', 'donor address', 'address line 1'],
-        'Donor Address Line 2': ['address2', 'address line 2', 'apt', 'suite'],
-        'Zip Code': ['zip', 'postal', 'zip code'],
-        'Donor Status': ['status', 'donor status'],
-        'Last 	Donation Date': ['last donation', 'previous donation', 'last donation date'],
-        'Birthdate': ['birth date', 'birthdate', 'dob', 'birth', 'date of birth'],
-    }
-    
-    # Get column names from dataframe
-    columns = df.columns.tolist()
-    
-    # Create mapping dictionary
-    column_mapping = {}
-    
-    # Display mapping UI in 3 columns
-    col1, col2, col3 = st.columns(3)
-    
-    # Required fields to map (only the essential ones)
-    required_fields = [
-        'Donor #', 'Donor Name', 'Donor E-mail', 'Donor Account #', 'Donor Phone',
-        'Facility', 'Donor Address Line 1', 'Donor Address Line 2', 'Zip Code',
-        'Donor Status', 'Last 	Donation Date', 'Birthdate'
-    ]
-    
-    # Distribute fields across columns
-    fields_per_column = len(required_fields) // 3 + (1 if len(required_fields) % 3 > 0 else 0)
-    
-    # Function to get default index based on pattern matching
-    def get_default_index(field):
-        patterns = column_patterns.get(field, [field.lower()])
-        return find_column_by_pattern(columns, patterns)
-    
-    # Display selectors in columns
-    for i, field in enumerate(required_fields):
-        col_idx = i // fields_per_column
-        col = [col1, col2, col3][col_idx]
-        
-        with col:
-            default_idx = get_default_index(field)
-            selected_col = st.selectbox(
-                f"{field}:",
-                options=columns,
-                index=default_idx,
-                key=f"map_{field}"
-            )
-            column_mapping[field] = selected_col
-    
-    # Return a dictionary of the mapping
-    return column_mapping
-
 def main():
     if not check_password():
         st.error("⚠️ Password incorrect. Please try again.")
@@ -629,109 +539,102 @@ def main():
     uploaded_file = st.file_uploader("Choose an Excel file", type=['xlsx'])
     
     if uploaded_file is not None:
-        # Validate the file
-        is_valid, message, df = validate_file(uploaded_file)
-        
-        if is_valid:
-            # Store initial record count
-            initial_records = len(df)
+        with st.spinner("Processing data and updating databases..."):
+            # Validate the file
+            is_valid, message, df = validate_file(uploaded_file)
             
-            # Display column mapping UI
-            with st.expander("Column Mapping (Required)", expanded=True):
-                st.info("Match your Excel columns to our required fields. We've tried to automatically match them, but please verify.")
-                column_mapping = render_column_mapping_ui(df)
-            
-            # Add a button to process with the mapped columns
-            if st.button("Process Data and Update Databases"):
-                with st.spinner("Processing data and updating databases..."):
-                    # Process the data with column mapping
-                    processed_df = process_data(df, column_mapping)
+            if is_valid:
+                # Store initial record count
+                initial_records = len(df)
+                
+                # Process the data
+                processed_df = process_data(df)
+                
+                # Load master database
+                master_df = load_master_db()
+                if master_df is None:
+                    st.error("Failed to load master database. Please check the connection.")
+                    return
+                
+                # Compare with master database
+                new_donors, updated_donors, really_updated = compare_dataframes(processed_df, master_df)
+                
+                # Update master database
+                final_master_df = update_master_database(master_df, new_donors, really_updated)
+                
+                # Get leads for upload
+                leads_df = get_leads_for_upload(new_donors, really_updated, master_df)
+                
+                # Save to databases
+                scope = ['https://spreadsheets.google.com/feeds',
+                        'https://www.googleapis.com/auth/drive']
+                credentials_dict = {
+                    "type": "service_account",
+                    "project_id": "third-hangout-387516",
+                    "private_key_id": st.secrets["private_key_id"],
+                    "private_key": st.secrets["google_credentials"],
+                    "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+                    "client_id": "114223947184571105588",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+                    "universe_domain": "googleapis.com"
+                }
+                
+                # Use the dictionary directly with from_json_keyfile_dict
+                credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+                gc = gspread.authorize(credentials)
+                spreadsheet_key = st.secrets["spreadsheet_key"]
+                workbook = gc.open_by_key(spreadsheet_key)
+                
+                # Save to master DB
+                worksheet = workbook.worksheet('DB')
+                success_master = save_to_gsheets(final_master_df, worksheet)
+                
+                # Save to upload process
+                success_upload = append_to_upload_process(new_donors, really_updated)
+                
+                if success_master and success_upload:
+                    st.success("✅ All databases updated successfully!")
                     
-                    # Load master database
-                    master_df = load_master_db()
-                    if master_df is None:
-                        st.error("Failed to load master database. Please check the connection.")
-                        return
+                    # Display statistics
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Total Records", initial_records)
+                    with col2:
+                        st.metric("Unique Donors", len(processed_df['Donor #'].unique()))
+                    with col3:
+                        st.metric("New Donors", len(new_donors))
+                    with col4:
+                        st.metric("Updated Records", len(really_updated))
+                    with col5:
+                        st.metric("Leads to Upload", len(leads_df))
                     
-                    # Compare with master database
-                    new_donors, updated_donors, really_updated = compare_dataframes(processed_df, master_df)
+                    # Show summary of changes
+                    if not new_donors.empty:
+                        st.markdown(f"### 🆕 New Donors: {len(new_donors)} records")
+                        st.write(f"Donor numbers: {', '.join(new_donors['Donor #'].astype(str))}")
                     
-                    # Update master database
-                    final_master_df = update_master_database(master_df, new_donors, really_updated)
+                    if not really_updated.empty:
+                        st.markdown(f"### 🔄 Updated Records: {len(really_updated)} records")
+                        st.write(f"Donor numbers: {', '.join(really_updated['Donor #'].astype(str))}")
                     
-                    # Get leads for upload
-                    leads_df = get_leads_for_upload(new_donors, really_updated, master_df)
-                    
-                    # Save to databases
-                    scope = ['https://spreadsheets.google.com/feeds',
-                            'https://www.googleapis.com/auth/drive']
-                    credentials_dict = {
-                        "type": "service_account",
-                        "project_id": "third-hangout-387516",
-                        "private_key_id": st.secrets["private_key_id"],
-                        "private_key": st.secrets["google_credentials"],
-                        "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-                        "client_id": "114223947184571105588",
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-                        "universe_domain": "googleapis.com"
-                    }
-                    
-                    # Use the dictionary directly with from_json_keyfile_dict
-                    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-                    gc = gspread.authorize(credentials)
-                    spreadsheet_key = st.secrets["spreadsheet_key"]
-                    workbook = gc.open_by_key(spreadsheet_key)
-                    
-                    # Save to master DB
-                    worksheet = workbook.worksheet('DB')
-                    success_master = save_to_gsheets(final_master_df, worksheet)
-                    
-                    # Save to upload process
-                    success_upload = append_to_upload_process(new_donors, really_updated)
-                    
-                    if success_master and success_upload:
-                        st.success("✅ All databases updated successfully!")
-                        
-                        # Display statistics
-                        col1, col2, col3, col4, col5 = st.columns(5)
-                        with col1:
-                            st.metric("Total Records", initial_records)
-                        with col2:
-                            st.metric("Unique Donors", len(processed_df['Donor #'].unique()))
-                        with col3:
-                            st.metric("New Donors", len(new_donors))
-                        with col4:
-                            st.metric("Updated Records", len(really_updated))
-                        with col5:
-                            st.metric("Leads to Upload", len(leads_df))
-                        
-                        # Show summary of changes
-                        if not new_donors.empty:
-                            st.markdown(f"### 🆕 New Donors: {len(new_donors)} records")
-                            st.write(f"Donor numbers: {', '.join(new_donors['Donor #'].astype(str))}")
-                        
-                        if not really_updated.empty:
-                            st.markdown(f"### 🔄 Updated Records: {len(really_updated)} records")
-                            st.write(f"Donor numbers: {', '.join(really_updated['Donor #'].astype(str))}")
-                        
-                        # Download options only for changed data
-                        if not leads_df.empty:
-                            st.markdown("### 📥 Download Options")
-                            csv_leads = leads_df.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Download Leads for Upload (CSV)",
-                                data=csv_leads,
-                                file_name="Olgam_Leads_For_Upload.csv",
-                                mime="text/csv",
-                                help="Download leads that need to be uploaded (new or updated phone/email)"
-                            )
-                    else:
-                        st.error("❌ Some updates failed. Please check the logs.")
-        else:
-            st.error("❌ " + message)
+                    # Download options only for changed data
+                    if not leads_df.empty:
+                        st.markdown("### 📥 Download Options")
+                        csv_leads = leads_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Leads for Upload (CSV)",
+                            data=csv_leads,
+                            file_name="Olgam_Leads_For_Upload.csv",
+                            mime="text/csv",
+                            help="Download leads that need to be uploaded (new or updated phone/email)"
+                        )
+                else:
+                    st.error("❌ Some updates failed. Please check the logs.")
+            else:
+                st.error("❌ " + message)
 
 if __name__ == "__main__":
     main() 
