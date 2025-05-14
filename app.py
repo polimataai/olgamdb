@@ -264,8 +264,23 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        headers = all_values[0][:10]
-        data = [row[:10] for row in all_values[1:]]
+        
+        # Get all columns up to column O (15 columns)
+        max_columns = 15
+        headers = all_values[0]
+        # Extend headers if needed to have enough columns
+        if len(headers) < max_columns:
+            headers.extend([''] * (max_columns - len(headers)))
+        headers = headers[:max_columns]
+        
+        # Get the data rows, also making sure we have enough columns
+        data = []
+        for row in all_values[1:]:
+            # Extend row if needed
+            if len(row) < max_columns:
+                row.extend([''] * (max_columns - len(row)))
+            data.append(row[:max_columns])
+        
         master_df = pd.DataFrame(data, columns=headers)
         return master_df
     except Exception as e:
@@ -274,10 +289,28 @@ def load_master_db():
 
 def compare_dataframes(processed_df, master_df):
     """Compare processed data with master database to find new and updated records."""
-    # Ensure both dataframes have the same column names
-    master_df.columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
+    # Define expected column names
+    expected_columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
                         'Donor Account #', 'Donor Phone', 'Donor Address', 
-                        'Zip Code', 'Donor Status', 'Center', 'x', 'x', 'x', 'x', 'Birthday']
+                        'Zip Code', 'Donor Status', 'Center']
+    
+    # Add placeholder columns
+    placeholder_columns = ['x', 'x', 'x', 'x']
+    
+    # Add Birthday column
+    birthday_column = ['Birthday']
+    
+    # All columns in expected order
+    all_columns = expected_columns + placeholder_columns + birthday_column
+    
+    # Ensure master_df has all required columns
+    for idx, col in enumerate(all_columns):
+        if idx >= len(master_df.columns):
+            # Add missing column
+            master_df[col] = ''
+        else:
+            # Rename existing column
+            master_df = master_df.rename(columns={master_df.columns[idx]: col})
     
     # Convert master_df Donor # to string for comparison
     master_df['Donor #'] = master_df['Donor #'].astype(str)
@@ -317,17 +350,21 @@ def compare_dataframes(processed_df, master_df):
     # Apply standardization to relevant fields
     fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthday']
     for field in fields_to_compare:
-        comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
-        comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
+        if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
+            comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
+            comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
     
     # Check for changes in specific fields (ignoring format)
     updated_mask = (
         (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
         (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
         (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-        (comparison_df['Center_new'] != comparison_df['Center_master']) |
-        (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
+        (comparison_df['Center_new'] != comparison_df['Center_master'])
     )
+    
+    # Add Birthday comparison if columns exist
+    if 'Birthday_new' in comparison_df.columns and 'Birthday_master' in comparison_df.columns:
+        updated_mask = updated_mask | (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
     
     # Get updated records using the correct column name (Donor #_new)
     updated_donors = existing_donors[existing_donors['Donor #'].isin(
@@ -335,14 +372,19 @@ def compare_dataframes(processed_df, master_df):
     )]
     
     # Create really_updated DataFrame for records with specific changes
+    really_updated_mask = (
+        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
+        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
+        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
+        (comparison_df['Center_new'] != comparison_df['Center_master'])
+    )
+    
+    # Add Birthday comparison if columns exist
+    if 'Birthday_new' in comparison_df.columns and 'Birthday_master' in comparison_df.columns:
+        really_updated_mask = really_updated_mask | (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
+    
     really_updated = existing_donors[existing_donors['Donor #'].isin(
-        comparison_df[
-            (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
-            (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
-            (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-            (comparison_df['Center_new'] != comparison_df['Center_master']) |
-            (comparison_df['Birthday_new'] != comparison_df['Birthday_master'])
-        ]['Donor #_new']
+        comparison_df[really_updated_mask]['Donor #_new']
     )]
     
     # Remove the temporary composite key columns before returning
