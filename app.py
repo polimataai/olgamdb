@@ -530,51 +530,48 @@ def compare_dataframes(processed_df, master_df):
     
     # Function to standardize values for comparison
     def standardize_value(x):
-        if pd.isna(x):
+        if pd.isna(x) or x == '':
             return ''
         # Convert to string and clean
-        x = str(x).lower().strip()
-        # Remove all spaces, special characters, and punctuation
-        x = re.sub(r'[^a-z0-9@.]', '', x)
-        return x
+        try:
+            x_str = str(x).lower().strip()
+            # Remove all spaces, special characters, and punctuation
+            return re.sub(r'[^a-z0-9@.]', '', x_str)
+        except:
+            # If any error occurs, return empty string
+            return ''
     
     # Apply standardization to relevant fields
     fields_to_compare = ['Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']
     for field in fields_to_compare:
         if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
-            comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(standardize_value)
-            comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(standardize_value)
+            comparison_df[f'{field}_new'] = comparison_df[f'{field}_new'].apply(lambda x: standardize_value(x))
+            comparison_df[f'{field}_master'] = comparison_df[f'{field}_master'].apply(lambda x: standardize_value(x))
     
     # Check for changes in specific fields (ignoring format)
-    updated_mask = (
-        (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
-        (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
-        (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-        (comparison_df['Center_new'] != comparison_df['Center_master']) |
-        (comparison_df.get('Birthdate_new', '') != comparison_df.get('Birthdate_master', ''))
-    )
+    fields_updated = []
+    for field in fields_to_compare:
+        if f'{field}_new' in comparison_df.columns and f'{field}_master' in comparison_df.columns:
+            fields_updated.append(comparison_df[f'{field}_new'] != comparison_df[f'{field}_master'])
+    
+    # Combine the update masks with logical OR
+    if fields_updated:
+        updated_mask = fields_updated[0]
+        for mask in fields_updated[1:]:
+            updated_mask = updated_mask | mask
+    else:
+        updated_mask = pd.Series(False, index=comparison_df.index)
     
     # Get updated records using the correct column name (Donor #_new)
     updated_donors = existing_donors[existing_donors['Donor #'].isin(
         comparison_df[updated_mask]['Donor #_new']
     )]
     
-    # Create really_updated DataFrame for records with specific changes
-    really_updated = existing_donors[existing_donors['Donor #'].isin(
-        comparison_df[
-            (comparison_df['Donor E-mail_new'] != comparison_df['Donor E-mail_master']) |
-            (comparison_df['Donor Phone_new'] != comparison_df['Donor Phone_master']) |
-            (comparison_df['Donor Address_new'] != comparison_df['Donor Address_master']) |
-            (comparison_df['Center_new'] != comparison_df['Center_master']) |
-            (comparison_df.get('Birthdate_new', '') != comparison_df.get('Birthdate_master', ''))
-        ]['Donor #_new']
-    )]
+    # Create really_updated DataFrame with the same logic
+    really_updated = updated_donors.copy()
     
     # Remove the temporary composite key columns before returning
     new_donors = new_donors.drop('composite_key', axis=1)
-    
-    # Clean up comparison_df before using it for updates
-    comparison_df = comparison_df.drop(['composite_key'], axis=1)
     
     return new_donors, updated_donors, really_updated
 
