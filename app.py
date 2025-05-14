@@ -457,9 +457,24 @@ def load_master_db():
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('COMBINED')
         all_values = worksheet.get_all_values()
-        headers = all_values[0][:11]  # Updated to include Birthdate
-        data = [row[:11] for row in all_values[1:]]
+        
+        # Get all columns including any potential data in columns L through O
+        headers = all_values[0]
+        # Ensure we have at least 15 columns (A through O)
+        if len(headers) < 15:
+            headers.extend([''] * (15 - len(headers)))
+        
+        # Extract all data rows
+        data = []
+        for row in all_values[1:]:
+            # Ensure each row has 15 columns
+            if len(row) < 15:
+                row.extend([''] * (15 - len(row)))
+            data.append(row)
+        
+        # Create a dataframe with all columns
         master_df = pd.DataFrame(data, columns=headers)
+        
         return master_df
     except Exception as e:
         st.error(f"Error loading master database: {str(e)}")
@@ -467,10 +482,26 @@ def load_master_db():
 
 def compare_dataframes(processed_df, master_df):
     """Compare processed data with master database to find new and updated records."""
-    # Ensure both dataframes have the same column names
-    master_df.columns = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
-                        'Donor Account #', 'Donor Phone', 'Donor Address', 
-                        'Zip Code', 'Donor Status', 'Center', 'Birthdate']
+    # Rename columns to standard names
+    # Get the column index for birthdate (should be column O or index 14)
+    birthdate_column_index = 14
+    
+    # Ensure both dataframes have the same column names for the first 10 columns plus birthdate
+    column_names = ['Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 
+                   'Donor Account #', 'Donor Phone', 'Donor Address', 
+                   'Zip Code', 'Donor Status', 'Center']
+    
+    # Rename the first 10 columns
+    for i, name in enumerate(column_names):
+        if i < len(master_df.columns):
+            master_df = master_df.rename(columns={master_df.columns[i]: name})
+    
+    # Rename the birthdate column (column O)
+    if birthdate_column_index < len(master_df.columns):
+        master_df = master_df.rename(columns={master_df.columns[birthdate_column_index]: 'Birthdate'})
+    elif 'Birthdate' not in master_df.columns:
+        # If column O doesn't exist, add it
+        master_df['Birthdate'] = ''
     
     # Convert master_df Donor # to string for comparison
     master_df['Donor #'] = master_df['Donor #'].astype(str)
@@ -491,7 +522,7 @@ def compare_dataframes(processed_df, master_df):
     
     # Merge to compare differences using composite key
     comparison_df = existing_donors_comp.merge(
-        master_df,
+        master_df[['composite_key', 'Donor #', 'Donor E-mail', 'Donor Phone', 'Donor Address', 'Center', 'Birthdate']],
         on='composite_key',
         how='left',
         suffixes=('_new', '_master')
@@ -549,10 +580,10 @@ def compare_dataframes(processed_df, master_df):
 
 def update_master_database(master_df, new_donors, really_updated):
     """Update master database with new and updated records."""
-    # Define the correct column order
-    SHEET_COLUMNS = [
+    # Define standard columns we want to keep in order A-J
+    STANDARD_COLUMNS = [
         'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 'Birthdate'
+        'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
     ]
     
     # Create a copy of master_df to avoid modifying the original
@@ -583,22 +614,44 @@ def update_master_database(master_df, new_donors, really_updated):
     
     final_master_df = pd.concat(frames_to_concat, ignore_index=True)
     
-    # Reorder columns to match Google Sheets
-    final_master_df = final_master_df[SHEET_COLUMNS]
-    
+    # Return the final dataframe
     return final_master_df
 
 def save_to_gsheets(df, worksheet):
-    """Save dataframe to Google Sheets."""
+    """Save dataframe to Google Sheets, placing Birthdate in column O."""
     try:
         # Clear existing content
         worksheet.clear()
         
+        # Define columns A-J (standard columns)
+        standard_columns = [
+            'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
+        ]
+        
+        # Create a new dataframe with the standard columns
+        output_df = df[standard_columns].copy()
+        
+        # Add empty columns K through N
+        for i in range(4):  # Add columns K, L, M, N
+            col_name = f"Column_{chr(75 + i)}"  # K=75, L=76, M=77, N=78
+            output_df[col_name] = ""
+        
+        # Add Birthdate in column O
+        output_df["Birthdate"] = df["Birthdate"] if "Birthdate" in df.columns else ""
+        
         # Replace NaN values with empty strings
-        df_clean = df.fillna('')
+        output_df_clean = output_df.fillna('')
         
         # Update with new content
-        worksheet.update([df_clean.columns.values.tolist()] + df_clean.values.tolist())
+        worksheet.update([output_df_clean.columns.values.tolist()] + output_df_clean.values.tolist())
+        
+        # If needed, update column headers to their proper names
+        header_row = ["Donor #", "Donor First", "Donor Last", "Donor E-mail", "Donor Account #",
+                     "Donor Phone", "Donor Address", "Zip Code", "Donor Status", "Center",
+                     "", "", "", "", "Birthdate"]
+        worksheet.update('A1:O1', [header_row])
+        
         return True
     except Exception as e:
         st.error(f"Error saving to Google Sheets: {str(e)}")
@@ -661,10 +714,10 @@ def append_to_upload_process(new_donors, really_updated):
         workbook = gc.open_by_key(spreadsheet_key)
         worksheet = workbook.worksheet('UPLOAD_PROCESS')
 
-        # Define the correct column order
-        UPLOAD_COLUMNS = [
+        # Define standard columns (A-J)
+        STANDARD_COLUMNS = [
             'Donor #', 'Donor First', 'Donor Last', 'Donor E-mail', 'Donor Account #',
-            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center', 'Birthdate'
+            'Donor Phone', 'Donor Address', 'Zip Code', 'Donor Status', 'Center'
         ]
 
         # Combine new and updated records
@@ -677,18 +730,28 @@ def append_to_upload_process(new_donors, really_updated):
             records_to_append['Center'] = records_to_append['Facility']
             records_to_append = records_to_append.drop('Facility', axis=1)
 
-        # Reorder columns to match required order
-        records_to_append = records_to_append[UPLOAD_COLUMNS]
+        # Prepare the data to append with birthdate in column O
+        rows_to_append = []
+        for _, row in records_to_append.iterrows():
+            new_row = []
+            # Add standard columns A-J
+            for col in STANDARD_COLUMNS:
+                new_row.append(row.get(col, ''))
+            
+            # Add empty columns K-N
+            new_row.extend([''] * 4)
+            
+            # Add Birthdate in column O
+            new_row.append(row.get('Birthdate', ''))
+            
+            rows_to_append.append(new_row)
 
-        # Prepare records for upload (replace NaN with empty string)
-        records_clean = records_to_append.fillna('')
-        
         # Get the last row with data
         last_row = len(worksheet.get_all_values())
         
         # Append new records starting from the next row
         worksheet.append_rows(
-            records_clean.values.tolist(),
+            rows_to_append,
             value_input_option='RAW',
             insert_data_option='INSERT_ROWS',
             table_range=f'A{last_row + 1}'
