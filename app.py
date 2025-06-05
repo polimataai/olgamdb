@@ -396,14 +396,34 @@ def save_to_gsheets(df, worksheet):
         # Clear existing content
         worksheet.clear()
         
+        # Log data types before processing
+        st.write("DEBUG: Data types in save_to_gsheets:")
+        for col in df.columns:
+            st.write(f"  {col}: {df[col].dtype}")
+        
+        # Convert any datetime/timestamp columns to strings
+        df_processed = df.copy()
+        for col in df_processed.columns:
+            if df_processed[col].dtype == 'datetime64[ns]' or str(df_processed[col].dtype).startswith('datetime'):
+                st.write(f"DEBUG: Converting {col} from datetime to string in save_to_gsheets")
+                df_processed[col] = df_processed[col].dt.strftime('%Y-%m-%d').fillna('')
+        
         # Replace NaN values with empty strings
-        df_clean = df.fillna('')
+        df_clean = df_processed.fillna('')
+        
+        # Log sample data
+        st.write("DEBUG: Sample data being saved to Google Sheets:")
+        st.write(df_clean.head())
         
         # Update with new content
         worksheet.update([df_clean.columns.values.tolist()] + df_clean.values.tolist())
+        st.success(f"Successfully saved {len(df_clean)} records to Google Sheets")
         return True
     except Exception as e:
         st.error(f"Error saving to Google Sheets: {str(e)}")
+        st.error(f"Error type: {type(e).__name__}")
+        import traceback
+        st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
 def get_leads_for_upload(new_donors, really_updated, master_df):
@@ -473,7 +493,13 @@ def append_to_upload_process(new_donors, really_updated):
         # Combine new and updated records
         records_to_append = pd.concat([new_donors, really_updated], ignore_index=True)
         if records_to_append.empty:
+            st.info("No records to append to UPLOAD_PROCESS")
             return True
+
+        # Log data types before processing
+        st.write("DEBUG: Data types before processing:")
+        for col in records_to_append.columns:
+            st.write(f"  {col}: {records_to_append[col].dtype}")
 
         # Rename Facility to Center if it exists
         if 'Facility' in records_to_append.columns:
@@ -490,26 +516,49 @@ def append_to_upload_process(new_donors, really_updated):
         if 'Birthday' not in records_to_append.columns:
             records_to_append['Birthday'] = ''
 
+        # Convert any datetime/timestamp columns to strings
+        for col in records_to_append.columns:
+            if records_to_append[col].dtype == 'datetime64[ns]' or str(records_to_append[col].dtype).startswith('datetime'):
+                st.write(f"DEBUG: Converting {col} from datetime to string")
+                records_to_append[col] = records_to_append[col].dt.strftime('%Y-%m-%d').fillna('')
+
         # Reorder columns to match required order
         records_to_append = records_to_append[UPLOAD_COLUMNS]
 
         # Prepare records for upload (replace NaN with empty string)
         records_clean = records_to_append.fillna('')
         
+        # Log data types after cleaning
+        st.write("DEBUG: Data types after cleaning:")
+        for col in records_clean.columns:
+            st.write(f"  {col}: {records_clean[col].dtype}")
+        
+        # Check for any remaining non-serializable objects
+        st.write("DEBUG: Sample data to be uploaded:")
+        st.write(records_clean.head())
+        
         # Get the last row with data
         last_row = len(worksheet.get_all_values())
         
+        # Convert to list and check each value
+        data_to_upload = records_clean.values.tolist()
+        st.write(f"DEBUG: Number of rows to upload: {len(data_to_upload)}")
+        
         # Append new records starting from the next row
         worksheet.append_rows(
-            records_clean.values.tolist(),
+            data_to_upload,
             value_input_option='RAW',
             insert_data_option='INSERT_ROWS',
             table_range=f'A{last_row + 1}'
         )
         
+        st.success(f"Successfully appended {len(data_to_upload)} records to UPLOAD_PROCESS")
         return True
     except Exception as e:
         st.error(f"Error appending to UPLOAD_PROCESS: {str(e)}")
+        st.error(f"Error type: {type(e).__name__}")
+        import traceback
+        st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
 def main():
