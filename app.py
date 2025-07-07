@@ -561,6 +561,59 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
+def upload_raw_to_gsheet(df):
+    """Sube el DataFrame original validado a la hoja de Google Sheets especificada, agregando al final."""
+    try:
+        scope = ['https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive']
+        credentials_dict = {
+            "type": "service_account",
+            "project_id": "third-hangout-387516",
+            "private_key_id": st.secrets["private_key_id"],
+            "private_key": st.secrets["google_credentials"],
+            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+            "client_id": "114223947184571105588",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+            "universe_domain": "googleapis.com"
+        }
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        gc = gspread.authorize(credentials)
+        # Abrir el Google Sheet por el nuevo ID proporcionado
+        workbook = gc.open_by_key('1t2PAePYWTpDQbPTlafIhSUUdiF_CJKDnSUfMc63zoX0')
+        worksheet = workbook.get_worksheet(0)  # Primera hoja
+        # Convertir columnas de tipo fecha/hora y time a string
+        df_processed = df.copy()
+        for col in df_processed.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_processed[col]):
+                df_processed[col] = df_processed[col].dt.strftime('%Y-%m-%d').fillna('')
+            elif pd.api.types.is_timedelta64_dtype(df_processed[col]):
+                df_processed[col] = df_processed[col].astype(str)
+            elif pd.api.types.is_object_dtype(df_processed[col]):
+                # Convertir objetos de tipo time o date a string
+                if df_processed[col].apply(lambda x: hasattr(x, 'isoformat')).any():
+                    df_processed[col] = df_processed[col].apply(lambda x: x.isoformat() if hasattr(x, 'isoformat') else str(x))
+        # Preparar los datos para subir
+        df_clean = df_processed.fillna('')
+        data_to_upload = df_clean.values.tolist()
+        # Obtener la última fila con datos
+        last_row = len(worksheet.get_all_values())
+        # Agregar los datos al final
+        worksheet.append_rows(
+            data_to_upload,
+            value_input_option='RAW',
+            insert_data_option='INSERT_ROWS',
+            table_range=f'A{last_row + 1}'
+        )
+        return True
+    except Exception as e:
+        st.error(f"Error subiendo datos originales a Google Sheets: {str(e)}")
+        import traceback
+        st.error(f"Full traceback: {traceback.format_exc()}")
+        return False
+
 def main():
     if not check_password():
         st.error("⚠️ Password incorrect. Please try again.")
@@ -579,10 +632,14 @@ def main():
     
     if uploaded_file is not None:
         with st.spinner("Processing data and updating databases..."):
-            # Validate the file
+            # Validar el archivo
             is_valid, message, df = validate_file(uploaded_file)
-            
             if is_valid:
+                # Subir datos originales a Google Sheets externo
+                success_raw = upload_raw_to_gsheet(df)
+                if not success_raw:
+                    st.error("No se pudo subir el archivo original a la hoja externa. Proceso detenido.")
+                    return
                 # Store initial record count
                 initial_records = len(df)
                 
