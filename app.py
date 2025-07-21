@@ -564,6 +564,27 @@ def append_to_upload_process(new_donors, really_updated):
 def upload_raw_to_gsheet(df):
     """Sube el DataFrame original validado a la hoja de Google Sheets especificada, agregando al final."""
     try:
+        # --- NUEVO BLOQUE: Eliminar la 5ta columna si corresponde ---
+        df_to_upload = df.copy()
+        if df_to_upload.shape[1] >= 5:
+            fifth_col = df_to_upload.columns[4]
+            fifth_col_lower = fifth_col.strip().replace(' ', '').lower()
+            # Variaciones aceptadas para nombre de columna
+            dob_variants = [
+                'dob', 'dateofbirth', 'birthdate', 'birth', 'fechadenacimiento', 'fecha_nacimiento', 'nacimiento'
+            ]
+            # Si el nombre coincide con alguna variante
+            if any(variant in fifth_col_lower for variant in dob_variants):
+                df_to_upload = df_to_upload.drop(columns=[fifth_col])
+            # O si la columna es de tipo fecha
+            elif pd.api.types.is_datetime64_any_dtype(df_to_upload.iloc[:, 4]):
+                df_to_upload = df_to_upload.drop(columns=[fifth_col])
+            # O si la mayoría de los valores parecen fechas (por ejemplo, más del 80% se pueden convertir a fecha)
+            else:
+                date_count = pd.to_datetime(df_to_upload.iloc[:, 4], errors='coerce').notna().sum()
+                if date_count / len(df_to_upload) > 0.8:
+                    df_to_upload = df_to_upload.drop(columns=[fifth_col])
+        # --- FIN BLOQUE NUEVO ---
         scope = ['https://spreadsheets.google.com/feeds',
                 'https://www.googleapis.com/auth/drive']
         credentials_dict = {
@@ -585,7 +606,7 @@ def upload_raw_to_gsheet(df):
         workbook = gc.open_by_key('1t2PAePYWTpDQbPTlafIhSUUdiF_CJKDnSUfMc63zoX0')
         worksheet = workbook.get_worksheet(0)  # Primera hoja
         # Convertir columnas de tipo fecha/hora y time a string
-        df_processed = df.copy()
+        df_processed = df_to_upload.copy()
         for col in df_processed.columns:
             if pd.api.types.is_datetime64_any_dtype(df_processed[col]):
                 df_processed[col] = df_processed[col].dt.strftime('%Y-%m-%d').fillna('')
