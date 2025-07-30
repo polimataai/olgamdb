@@ -134,11 +134,11 @@ def get_google_auth_url():
                 "token_uri": st.secrets["google_oauth"]["token_uri"],
                 "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
                 "client_secret": st.secrets["google_oauth"]["client_secret"],
-                "redirect_uris": ["http://localhost"]
+                "redirect_uris": ["https://olgamdb.streamlit.app/"]
             }
         },
         scopes=['https://www.googleapis.com/auth/drive.file'],
-        redirect_uri="http://localhost"
+        redirect_uri="https://olgamdb.streamlit.app/"
     )
     auth_url, _ = flow.authorization_url(prompt='consent')
     return auth_url
@@ -158,30 +158,64 @@ def get_google_creds():
             # Get the authorization code from URL parameters
             params = st.experimental_get_query_params()
             if 'code' in params:
-                flow = InstalledAppFlow.from_client_config(
-                    {
-                        "web": {
-                            "client_id": st.secrets["google_oauth"]["client_id"],
-                            "project_id": st.secrets["google_oauth"]["project_id"],
-                            "auth_uri": st.secrets["google_oauth"]["auth_uri"],
-                            "token_uri": st.secrets["google_oauth"]["token_uri"],
-                            "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
-                            "client_secret": st.secrets["google_oauth"]["client_secret"],
-                            "redirect_uris": ["http://localhost"]
-                        }
-                    },
-                    scopes=['https://www.googleapis.com/auth/drive.file'],
-                    redirect_uri="http://localhost"
-                )
-                code = params['code'][0]
-                flow.fetch_token(code=code)
-                creds = flow.credentials
-                st.session_state['google_token'] = creds
+                try:
+                    flow = InstalledAppFlow.from_client_config(
+                        {
+                            "web": {
+                                "client_id": st.secrets["google_oauth"]["client_id"],
+                                "project_id": st.secrets["google_oauth"]["project_id"],
+                                "auth_uri": st.secrets["google_oauth"]["auth_uri"],
+                                "token_uri": st.secrets["google_oauth"]["token_uri"],
+                                "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                                "client_secret": st.secrets["google_oauth"]["client_secret"],
+                                "redirect_uris": ["https://olgamdb.streamlit.app/"]
+                            }
+                        },
+                        scopes=['https://www.googleapis.com/auth/drive.file'],
+                        redirect_uri="https://olgamdb.streamlit.app/"
+                    )
+                    code = params['code'][0]
+                    flow.fetch_token(code=code)
+                    creds = flow.credentials
+                    st.session_state['google_token'] = creds
+                    
+                    # Clear the URL parameters to avoid reusing the same code
+                    st.experimental_set_query_params()
+                    st.success("✅ Successfully authenticated with Google Drive!")
+                    st.info("Please continue with your file upload now.")
+                except Exception as e:
+                    st.error(f"Authentication error: {str(e)}")
+                    st.info("Please try authorizing again.")
+                    auth_url = get_google_auth_url()
+                    st.markdown(f'''
+                        <h3>🔐 Google Drive Authorization Required</h3>
+                        <p>To save excess files to your Google Drive, please authorize the application:</p>
+                        <a href="{auth_url}" target="_blank">
+                            <button style="
+                                background-color: #4285f4;
+                                color: white;
+                                padding: 10px 20px;
+                                border: none;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                font-size: 16px;
+                                margin: 10px 0;">
+                                🔑 Authorize Google Drive Access
+                            </button>
+                        </a>
+                        ''', unsafe_allow_html=True)
+                    st.stop()
             else:
                 auth_url = get_google_auth_url()
                 st.markdown(f'''
                     <h3>🔐 Google Drive Authorization Required</h3>
                     <p>To save excess files to your Google Drive, please authorize the application:</p>
+                    <ol>
+                        <li>Click the button below to authorize</li>
+                        <li>Sign in with your Google account</li>
+                        <li>Grant the requested permissions</li>
+                        <li>You will be redirected back to this app</li>
+                    </ol>
                     <a href="{auth_url}" target="_blank">
                         <button style="
                             background-color: #4285f4;
@@ -195,6 +229,7 @@ def get_google_creds():
                             🔑 Authorize Google Drive Access
                         </button>
                     </a>
+                    <p style="color: #666; margin-top: 20px;">Note: After authorization, you will be redirected to <strong>https://olgamdb.streamlit.app/</strong>. Please return to this tab if it doesn't automatically.</p>
                     ''', unsafe_allow_html=True)
                 st.stop()
     
@@ -800,16 +835,37 @@ def upload_raw_to_gsheet(df):
             new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
             try:
                 link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} of the data was saved to your personal Google Drive: [Open excess file part {file_count}]({link})")
+                st.success(f"✅ Part {file_count} of the data was saved to your Google Drive")
+                st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
             except Exception as move_err:
-                st.warning(f"Could not upload file part {file_count} to your personal Google Drive: {move_err}")
-                # Try to save locally as fallback
-                try:
-                    local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                    df_chunk.to_excel(local_filename, index=False)
-                    st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
-                except Exception as local_err:
-                    st.error(f"Failed to save file part {file_count} locally: {local_err}")
+                error_msg = str(move_err)
+                if "could not locate runnable browser" in error_msg or "redirect_uri_mismatch" in error_msg or "invalid_grant" in error_msg:
+                    st.error("Google Drive authentication required")
+                    # Get fresh credentials
+                    try:
+                        creds = get_google_creds()
+                        # Try again with new credentials
+                        link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
+                        st.success(f"✅ Part {file_count} of the data was saved to your Google Drive")
+                        st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
+                    except Exception as auth_err:
+                        st.error(f"Authentication failed: {str(auth_err)}")
+                        # Try to save locally as fallback
+                        try:
+                            local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                            df_chunk.to_excel(local_filename, index=False)
+                            st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
+                        except Exception as local_err:
+                            st.error(f"Failed to save file part {file_count} locally: {local_err}")
+                else:
+                    st.warning(f"Could not upload file part {file_count} to your Google Drive: {move_err}")
+                    # Try to save locally as fallback
+                    try:
+                        local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                        df_chunk.to_excel(local_filename, index=False)
+                        st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
+                    except Exception as local_err:
+                        st.error(f"Failed to save file part {file_count} locally: {local_err}")
             file_count += 1
         
         return True
