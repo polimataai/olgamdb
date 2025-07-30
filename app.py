@@ -823,12 +823,32 @@ def append_to_upload_process(new_donors, really_updated):
 
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
-    # Get Google credentials
+    """Upload Excel file to Google Drive using service account credentials.
+    This uses a shared folder to avoid quota issues with service accounts."""
     try:
-        creds = get_google_creds()
+        # Use service account credentials instead of OAuth
+        scope = ['https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive']
         
-        # If we got here, we have valid credentials
-        drive_service = build('drive', 'v3', credentials=creds)
+        credentials_dict = {
+            "type": "service_account",
+            "project_id": "third-hangout-387516",
+            "private_key_id": st.secrets["private_key_id"],
+            "private_key": st.secrets["google_credentials"],
+            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+            "client_id": "114223947184571105588",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+            "universe_domain": "googleapis.com"
+        }
+        
+        # Use the dictionary directly with from_json_keyfile_dict
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        
+        # Build the Drive service
+        drive_service = build('drive', 'v3', credentials=credentials)
         
         # Create a temporary file
         temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
@@ -846,9 +866,10 @@ def save_excel_to_drive_personal(df, filename, folder_id=None):
                 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             }
             
-            # If folder_id is provided, add it to the parent folder
-            if folder_id:
-                file_metadata['parents'] = [folder_id]
+            # Always use the shared folder ID to avoid quota issues
+            # This is a folder that has been shared with the service account
+            shared_folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'  # Use the folder ID provided in your code
+            file_metadata['parents'] = [shared_folder_id]
             
             # Create media
             media = MediaFileUpload(
@@ -868,7 +889,7 @@ def save_excel_to_drive_personal(df, filename, folder_id=None):
             return file.get('webViewLink')
         
         except Exception as e:
-            st.error(f"Could not upload file {filename} to your personal Google Drive: {str(e)}")
+            st.error(f"Could not upload file {filename} to Google Drive: {str(e)}")
             
             # Try to save locally as fallback
             try:
@@ -911,7 +932,7 @@ def save_excel_to_drive_personal(df, filename, folder_id=None):
             return None
 
 def upload_raw_to_gsheet(df):
-    """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to your personal Google Drive using OAuth, in parts of maximum 50,000 rows."""
+    """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to Google Drive using service account, in parts of maximum 50,000 rows."""
     try:
         import gspread
         from gspread.exceptions import APIError
@@ -1013,10 +1034,10 @@ def upload_raw_to_gsheet(df):
             else:
                 start_idx = 0
         
-        # Now, create Excel files with maximum 50,000 rows and upload them to your personal Drive
+        # Now, create Excel files with maximum 50,000 rows and upload them to Google Drive
         file_count = 1
         data_rest = data_to_upload[start_idx:] if not inserted_in_main else data_to_upload[start_idx:]
-        folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'
+        folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'  # Shared folder ID
         max_excel_rows = 50000
         
         while data_rest:
@@ -1026,49 +1047,21 @@ def upload_raw_to_gsheet(df):
             new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
             try:
                 link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                st.success(f"✅ Part {file_count} of the data was saved to your Google Drive")
+                st.success(f"✅ Part {file_count} of the data was saved to Google Drive")
                 st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
             except Exception as move_err:
-                error_msg = str(move_err)
-                if "could not locate runnable browser" in error_msg or "redirect_uri_mismatch" in error_msg or "invalid_grant" in error_msg or "accounts.google.com" in error_msg:
-                    st.error("Google Drive authentication required")
-                    st.info("Please authorize Google Drive access to save your files")
-                    
-                    # Get fresh credentials
-                    try:
-                        creds = get_google_creds()
-                        # Try again with new credentials
-                        link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                        st.success(f"✅ Part {file_count} of the data was saved to your Google Drive")
-                        st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
-                    except Exception as auth_err:
-                        st.error(f"Authentication failed: {str(auth_err)}")
-                        st.warning("We need Google Drive access to save your files. Please try again with the authorization button above.")
-                        
-                        # Create a download button as a last resort
-                        buffer = io.BytesIO()
-                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            df_chunk.to_excel(writer, index=False)
-                        
-                        st.download_button(
-                            label=f"⬇️ Download Part {file_count} as Excel",
-                            data=buffer.getvalue(),
-                            file_name=f"Olgam_Data_Excess_Part_{file_count}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                else:
-                    st.warning(f"Could not upload file part {file_count} to your Google Drive: {move_err}")
-                    # Create a download button as a last resort
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        df_chunk.to_excel(writer, index=False)
-                    
-                    st.download_button(
-                        label=f"⬇️ Download Part {file_count} as Excel",
-                        data=buffer.getvalue(),
-                        file_name=f"Olgam_Data_Excess_Part_{file_count}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                st.warning(f"Could not upload file part {file_count} to Google Drive: {str(move_err)}")
+                # Create a download button as a last resort
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_chunk.to_excel(writer, index=False)
+                
+                st.download_button(
+                    label=f"⬇️ Download Part {file_count} as Excel",
+                    data=buffer.getvalue(),
+                    file_name=f"Olgam_Data_Excess_Part_{file_count}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             file_count += 1
         
         return True
