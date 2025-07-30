@@ -23,22 +23,67 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Define a token file path - this will persist between sessions
+TOKEN_PATH = "./.token.pickle"
+
 # Check for OAuth code at startup
 params = st.query_params
 if 'code' in params and 'state' in params:
-    st.session_state['oauth_code'] = params['code'][0]
-    st.session_state['oauth_state'] = params['state'][0]
-    # Clear URL parameters
-    st.query_params.clear()
-    
-    # Show success message and stop execution
-    st.success("✅ Google Drive authorization successful!")
-    st.info("You can now close this tab. The authorization has been saved automatically.")
-    
-    # Add a button to help user continue
-    if st.button("Continue with File Processing"):
-        st.rerun()
-    else:
+    # We're in the OAuth callback page
+    try:
+        # Create the flow with the same parameters as the original request
+        flow = InstalledAppFlow.from_client_config(
+            {
+                "web": {
+                    "client_id": st.secrets["google_oauth"]["client_id"],
+                    "project_id": st.secrets["google_oauth"]["project_id"],
+                    "auth_uri": st.secrets["google_oauth"]["auth_uri"],
+                    "token_uri": st.secrets["google_oauth"]["token_uri"],
+                    "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                    "client_secret": st.secrets["google_oauth"]["client_secret"],
+                    "redirect_uris": ["https://olgamdb.streamlit.app/"]
+                }
+            },
+            scopes=['https://www.googleapis.com/auth/drive.file'],
+            redirect_uri="https://olgamdb.streamlit.app/"
+        )
+        
+        # Exchange the authorization code for a token
+        code = params['code'][0]
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        
+        # Save the credentials to a file
+        with open(TOKEN_PATH, 'wb') as token:
+            pickle.dump(creds, token)
+            
+        # Clear URL parameters
+        st.query_params.clear()
+        
+        # Show success message
+        st.success("✅ Google Drive authorization successful!")
+        st.info("The authorization has been saved. You can now close this tab and continue with your file processing.")
+        
+        # Add a direct link back to the main app
+        st.markdown(f'''
+            <a href="https://olgamdb.streamlit.app/" target="_self" style="text-decoration: none;">
+                <button style="
+                    background-color: #4CAF50;
+                    color: white;
+                    padding: 12px 24px;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    font-weight: bold;
+                    margin: 20px 0;">
+                    Return to Main Application
+                </button>
+            </a>
+            ''', unsafe_allow_html=True)
+        st.stop()
+    except Exception as e:
+        st.error(f"Error processing authorization: {str(e)}")
         st.stop()
 
 # Custom CSS for better styling and force light theme
@@ -170,132 +215,72 @@ def get_google_auth_url():
 def get_google_creds():
     creds = None
     
-    # Check if we have a token in session state
-    if 'google_token' in st.session_state:
-        creds = st.session_state['google_token']
+    # Check if we have a token file
+    if os.path.exists(TOKEN_PATH):
+        with open(TOKEN_PATH, 'rb') as token:
+            try:
+                creds = pickle.load(token)
+            except Exception as e:
+                st.error(f"Error loading credentials: {str(e)}")
     
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # Check if we have a code in session state (from the redirect)
-            if 'oauth_code' in st.session_state:
-                try:
-                    flow = InstalledAppFlow.from_client_config(
-                        {
-                            "web": {
-                                "client_id": st.secrets["google_oauth"]["client_id"],
-                                "project_id": st.secrets["google_oauth"]["project_id"],
-                                "auth_uri": st.secrets["google_oauth"]["auth_uri"],
-                                "token_uri": st.secrets["google_oauth"]["token_uri"],
-                                "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
-                                "client_secret": st.secrets["google_oauth"]["client_secret"],
-                                "redirect_uris": ["https://olgamdb.streamlit.app/"]
-                            }
-                        },
-                        scopes=['https://www.googleapis.com/auth/drive.file'],
-                        redirect_uri="https://olgamdb.streamlit.app/"
-                    )
-                    code = st.session_state['oauth_code']
-                    flow.fetch_token(code=code)
-                    creds = flow.credentials
-                    st.session_state['google_token'] = creds
-                    # Remove the code from session state to avoid reuse
-                    del st.session_state['oauth_code']
-                    st.success("✅ Successfully authenticated with Google Drive!")
-                    return creds
-                except Exception as e:
-                    st.error(f"Authentication error: {str(e)}")
-                    auth_url = get_google_auth_url()
-                    
-                    st.markdown("""
-                    <h3>🔐 Google Drive Authorization Failed</h3>
-                    <p>Please try authorizing again by clicking the button below:</p>
-                    """, unsafe_allow_html=True)
-                    
-                    col1, col2 = st.columns([1, 2])
-                    with col1:
-                        st.markdown(f'''
-                        <a href="{auth_url}" target="_blank" style="text-decoration: none;">
-                            <button style="
-                                background-color: #4285f4;
-                                color: white;
-                                padding: 12px 24px;
-                                border: none;
-                                border-radius: 5px;
-                                cursor: pointer;
-                                font-size: 16px;
-                                font-weight: bold;
-                                display: inline-flex;
-                                align-items: center;
-                                margin: 10px 0;">
-                                <span style="margin-right: 8px;">🔑</span> Retry Authorization
-                            </button>
-                        </a>
-                        ''', unsafe_allow_html=True)
-                    
-                    with col2:
-                        st.markdown("""
-                        <ol style="margin-top: 10px;">
-                            <li>Click the button to open Google authorization</li>
-                            <li>Sign in with your Google account</li>
-                            <li>After authorizing, you'll see a success message</li>
-                            <li>The authorization is saved automatically</li>
-                        </ol>
-                        """, unsafe_allow_html=True)
-                    
-                    # Provide direct URL for manual copy-paste
-                    with st.expander("Authorization URL (if button doesn't work)"):
-                        st.code(auth_url, language=None)
-                        st.caption("Copy and paste this URL into your browser if the button doesn't work")
-                    
-                    st.stop()
-            else:
-                auth_url = get_google_auth_url()
-                
+            try:
+                creds.refresh(Request())
+                # Save the refreshed credentials
+                with open(TOKEN_PATH, 'wb') as token:
+                    pickle.dump(creds, token)
+            except Exception as e:
+                # If refresh fails, we need to get new credentials
+                os.remove(TOKEN_PATH) if os.path.exists(TOKEN_PATH) else None
+                creds = None
+        
+        if not creds:
+            auth_url = get_google_auth_url()
+            
+            st.markdown("""
+            <h3>🔐 Google Drive Authorization Required</h3>
+            <p>To save excess files to your Google Drive, we need your authorization:</p>
+            """, unsafe_allow_html=True)
+            
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.markdown(f'''
+                <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+                    <button style="
+                        background-color: #4285f4;
+                        color: white;
+                        padding: 12px 24px;
+                        border: none;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        font-weight: bold;
+                        display: inline-flex;
+                        align-items: center;
+                        margin: 10px 0;">
+                        <span style="margin-right: 8px;">🔑</span> Authorize Access
+                    </button>
+                </a>
+                ''', unsafe_allow_html=True)
+            
+            with col2:
                 st.markdown("""
-                <h3>🔐 Google Drive Authorization Required</h3>
-                <p>To save excess files to your Google Drive, we need your authorization:</p>
+                <ol style="margin-top: 10px;">
+                    <li>Click the button to open Google authorization</li>
+                    <li>Sign in with your Google account</li>
+                    <li>After authorizing, you'll be redirected to a confirmation page</li>
+                    <li>Then return to this tab to continue processing</li>
+                </ol>
                 """, unsafe_allow_html=True)
-                
-                col1, col2 = st.columns([1, 2])
-                with col1:
-                    st.markdown(f'''
-                    <a href="{auth_url}" target="_blank" style="text-decoration: none;">
-                        <button style="
-                            background-color: #4285f4;
-                            color: white;
-                            padding: 12px 24px;
-                            border: none;
-                            border-radius: 5px;
-                            cursor: pointer;
-                            font-size: 16px;
-                            font-weight: bold;
-                            display: inline-flex;
-                            align-items: center;
-                            margin: 10px 0;">
-                            <span style="margin-right: 8px;">🔑</span> Authorize Access
-                        </button>
-                    </a>
-                    ''', unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown("""
-                    <ol style="margin-top: 10px;">
-                        <li>Click the button to open Google authorization</li>
-                        <li>Sign in with your Google account</li>
-                        <li>After authorizing, you'll see a success message</li>
-                        <li>The authorization is saved automatically</li>
-                    </ol>
-                    """, unsafe_allow_html=True)
-                
-                # Provide direct URL for manual copy-paste
-                with st.expander("Authorization URL (if button doesn't work)"):
-                    st.code(auth_url, language=None)
-                    st.caption("Copy and paste this URL into your browser if the button doesn't work")
-                
-                st.stop()
+            
+            # Provide direct URL for manual copy-paste
+            with st.expander("Authorization URL (if button doesn't work)"):
+                st.code(auth_url, language=None)
+                st.caption("Copy and paste this URL into your browser if the button doesn't work")
+            
+            st.stop()
     
     return creds
 
