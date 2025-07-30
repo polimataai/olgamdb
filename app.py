@@ -7,12 +7,10 @@ import json
 import os
 import tempfile
 import datetime
+import io
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-import io
-from google_auth_oauthlib.flow import InstalledAppFlow
-import webbrowser
-import urllib.parse
 
 # Force light theme and other configurations
 st.set_page_config(
@@ -570,66 +568,80 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
-def get_oauth_credentials_dict():
-    secrets = st.secrets["google_oauth"]
-    return {
-        "installed": {
-            "client_id": secrets["client_id"],
-            "project_id": secrets["project_id"],
-            "auth_uri": secrets["auth_uri"],
-            "token_uri": secrets["token_uri"],
-            "auth_provider_x509_cert_url": secrets["auth_provider_x509_cert_url"],
-            "client_secret": secrets["client_secret"],
-            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
-        }
-    }
 
-def get_drive_service_oauth():
-    SCOPES = ['https://www.googleapis.com/auth/drive.file']
-    
-    # Check if we already have credentials in session state
-    if 'drive_credentials' in st.session_state:
-        return build('drive', 'v3', credentials=st.session_state['drive_credentials'])
-    
-    # Start OAuth flow
-    creds_dict = get_oauth_credentials_dict()
-    flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
-    
-    # Generate authorization URL without specifying redirect_uri (it's already in the config)
-    auth_url, _ = flow.authorization_url(
-        prompt='consent',
-        access_type='offline'
-    )
-    
-    # Display the authorization URL to the user
-    st.markdown("### 🔐 Google Drive Authentication Required")
-    st.markdown("To upload files to your personal Google Drive, you need to authorize this application.")
-    st.markdown("**Please follow these steps:**")
-    st.markdown("1. Click the link below to open Google authorization")
-    st.markdown("2. Sign in with your Google account")
-    st.markdown("3. Grant permission to access your Google Drive")
-    st.markdown("4. Copy the authorization code that appears")
-    st.markdown("5. Paste the code in the field below")
-    
-    st.markdown(f"**[🔗 Click here to authorize Google Drive access]({auth_url})**")
-    
-    # Add a text input for the user to paste the authorization code
-    st.markdown("**Paste the authorization code here:**")
-    auth_code = st.text_input("Authorization Code:", type="password", key="auth_code_input", 
-                             help="Copy the code from Google and paste it here")
-    
-    if auth_code:
-        try:
-            # Exchange the authorization code for credentials without specifying redirect_uri
-            flow.fetch_token(code=auth_code)
-            st.session_state['drive_credentials'] = flow.credentials
-            st.success("✅ Authentication successful! You can now upload files to your Google Drive.")
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"❌ Authentication failed: {str(e)}")
-            st.info("Please check the authorization code and try again.")
-    
-    return None
+
+def save_excel_to_drive_personal(df, filename, folder_id=None):
+    """Upload Excel file to Google Drive using service account credentials"""
+    try:
+        # Create service account credentials
+        credentials_dict = {
+            "type": "service_account",
+            "project_id": "third-hangout-387516",
+            "private_key_id": st.secrets["private_key_id"],
+            "private_key": st.secrets["google_credentials"],
+            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+            "client_id": "114223947184571105588",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+            "universe_domain": "googleapis.com"
+        }
+        
+        # Create credentials and build service
+        credentials = service_account.Credentials.from_service_account_info(
+            credentials_dict,
+            scopes=['https://www.googleapis.com/auth/drive.file']
+        )
+        service = build('drive', 'v3', credentials=credentials)
+        
+        # Save DataFrame to temporary Excel file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            temp_file = tmp.name
+            df.to_excel(temp_file, index=False)
+            tmp.flush()
+            
+            try:
+                # Prepare file metadata
+                file_metadata = {
+                    'name': filename,
+                    'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                }
+                
+                # If folder_id is provided, add it to parents
+                if folder_id:
+                    file_metadata['parents'] = [folder_id]
+                
+                # Create media file upload object
+                media = MediaFileUpload(
+                    temp_file,
+                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    resumable=True
+                )
+                
+                # Execute the upload
+                file = service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, webViewLink',
+                    supportsAllDrives=True
+                ).execute()
+                
+                # Get the file's web view link
+                web_link = file.get('webViewLink')
+                
+                return web_link
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file)
+                except Exception:
+                    pass  # Ignore cleanup errors
+                    
+    except Exception as e:
+        st.error(f"❌ Error uploading to Google Drive: {str(e)}")
+        raise e
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
     # Try to get OAuth service
@@ -789,20 +801,9 @@ def upload_raw_to_gsheet(df):
             new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
             try:
                 link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                if link:
-                    st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} of the data was saved to your personal Google Drive: [Open excess file part {file_count}]({link})")
-                else:
-                    # File was saved locally
-                    st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} was saved locally.")
+                st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} was uploaded to Google Drive: [Open file part {file_count}]({link})")
             except Exception as move_err:
-                st.warning(f"Could not upload file part {file_count} to your personal Google Drive: {move_err}")
-                # Try to save locally as fallback
-                try:
-                    local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                    df_chunk.to_excel(local_filename, index=False)
-                    st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
-                except Exception as local_err:
-                    st.error(f"Failed to save file part {file_count} locally: {local_err}")
+                st.error(f"Could not upload file part {file_count} to Google Drive: {move_err}")
             file_count += 1
         
         return True
