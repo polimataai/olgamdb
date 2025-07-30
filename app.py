@@ -10,6 +10,9 @@ import datetime
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import io
+from google_auth_oauthlib.flow import InstalledAppFlow
+import webbrowser
+import urllib.parse
 
 # Force light theme and other configurations
 st.set_page_config(
@@ -567,27 +570,80 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
+def get_oauth_credentials_dict():
+    secrets = st.secrets["google_oauth"]
+    return {
+        "installed": {
+            "client_id": secrets["client_id"],
+            "project_id": secrets["project_id"],
+            "auth_uri": secrets["auth_uri"],
+            "token_uri": secrets["token_uri"],
+            "auth_provider_x509_cert_url": secrets["auth_provider_x509_cert_url"],
+            "client_secret": secrets["client_secret"],
+            "redirect_uris": list(secrets["redirect_uris"])
+        }
+    }
 
+def get_drive_service_oauth():
+    SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    
+    # Check if we already have credentials in session state
+    if 'drive_credentials' in st.session_state:
+        return build('drive', 'v3', credentials=st.session_state['drive_credentials'])
+    
+    # Check if we're in the OAuth callback
+    if 'oauth_code' in st.session_state:
+        creds_dict = get_oauth_credentials_dict()
+        flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
+        
+        # Exchange the authorization code for credentials
+        flow.fetch_token(code=st.session_state['oauth_code'])
+        st.session_state['drive_credentials'] = flow.credentials
+        del st.session_state['oauth_code']
+        
+        return build('drive', 'v3', credentials=flow.credentials)
+    
+    # Start OAuth flow
+    creds_dict = get_oauth_credentials_dict()
+    flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
+    
+    # Generate authorization URL
+    auth_url, _ = flow.authorization_url(prompt='consent')
+    
+    # Display the authorization URL to the user
+    st.markdown("### 🔐 Google Drive Authentication Required")
+    st.markdown("To upload files to your personal Google Drive, you need to authorize this application.")
+    st.markdown(f"**Please click the link below to authorize:**")
+    st.markdown(f"[🔗 Authorize Google Drive Access]({auth_url})")
+    
+    # Add a text input for the user to paste the authorization code
+    st.markdown("**After authorization, copy the authorization code and paste it below:**")
+    auth_code = st.text_input("Authorization Code:", type="password", key="auth_code_input")
+    
+    if auth_code:
+        try:
+            # Exchange the authorization code for credentials
+            flow.fetch_token(code=auth_code)
+            st.session_state['drive_credentials'] = flow.credentials
+            st.success("✅ Authentication successful! You can now upload files.")
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(f"❌ Authentication failed: {str(e)}")
+            st.info("Please try again with a valid authorization code.")
+    
+    return None
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
-    # Use service account credentials instead of OAuth for better compatibility
-    scope = ['https://www.googleapis.com/auth/drive.file']
-    credentials_dict = {
-        "type": "service_account",
-        "project_id": "third-hangout-387516",
-        "private_key_id": st.secrets["private_key_id"],
-        "private_key": st.secrets["google_credentials"],
-        "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-        "client_id": "114223947184571105588",
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-        "universe_domain": "googleapis.com"
-    }
+    # Try to get OAuth service
+    service = get_drive_service_oauth()
     
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-    service = build('drive', 'v3', credentials=credentials)
+    if service is None:
+        # If OAuth is not available, fall back to local save
+        st.warning("⚠️ Google Drive authentication not available. Saving file locally instead.")
+        local_filename = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        df.to_excel(local_filename, index=False)
+        st.success(f"📁 File saved locally as: {local_filename}")
+        return None
     
     # Save the DataFrame as a temporary Excel file
     temp_file = None
