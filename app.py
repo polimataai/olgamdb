@@ -643,48 +643,6 @@ def save_excel_to_drive_personal(df, filename, folder_id=None):
         st.error(f"❌ Error uploading to Google Drive: {str(e)}")
         raise e
 
-def save_excel_to_drive_personal(df, filename, folder_id=None):
-    # Try to get OAuth service
-    service = get_drive_service_oauth()
-    
-    if service is None:
-        # If OAuth is not available, fall back to local save
-        st.warning("⚠️ Google Drive authentication not available. Saving file locally instead.")
-        local_filename = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        df.to_excel(local_filename, index=False)
-        st.success(f"📁 File saved locally as: {local_filename}")
-        return None
-    
-    # Save the DataFrame as a temporary Excel file
-    temp_file = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            temp_file = tmp.name
-            df.to_excel(temp_file, index=False)
-        
-        file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
-        if folder_id:
-            file_metadata['parents'] = [folder_id]
-        media = MediaFileUpload(temp_file, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        file = service.files().create(body=file_metadata, media_body=media, fields='id,webViewLink').execute()
-        return file.get('webViewLink')
-    except Exception as e:
-        raise e
-    finally:
-        # Clean up temporary file with retry mechanism
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.unlink(temp_file)
-            except OSError:
-                # If immediate deletion fails, try again after a short delay
-                import time
-                time.sleep(0.1)
-                try:
-                    os.unlink(temp_file)
-                except OSError:
-                    # If still fails, just log it but don't raise error
-                    st.warning(f"Could not delete temporary file: {temp_file}")
-
 def upload_raw_to_gsheet(df):
     """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to your personal Google Drive using OAuth, in parts of maximum 50,000 rows."""
     try:
