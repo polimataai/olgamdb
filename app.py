@@ -24,13 +24,20 @@ st.set_page_config(
 )
 
 # Define a token file path - this will persist between sessions
-TOKEN_PATH = "./.token.pickle"
+# Use a path in the Streamlit cache directory which is writable
+import tempfile
+TOKEN_DIR = tempfile.gettempdir()
+TOKEN_PATH = os.path.join(TOKEN_DIR, "olgamdb_token.pickle")
 
 # Check for OAuth code at startup
 params = st.query_params
 if 'code' in params and 'state' in params:
     # We're in the OAuth callback page
     try:
+        # Get the code and immediately clear URL parameters to prevent reuse
+        code = params['code'][0]
+        st.query_params.clear()
+        
         # Create the flow with the same parameters as the original request
         flow = InstalledAppFlow.from_client_config(
             {
@@ -49,16 +56,12 @@ if 'code' in params and 'state' in params:
         )
         
         # Exchange the authorization code for a token
-        code = params['code'][0]
         flow.fetch_token(code=code)
         creds = flow.credentials
         
         # Save the credentials to a file
         with open(TOKEN_PATH, 'wb') as token:
             pickle.dump(creds, token)
-            
-        # Clear URL parameters
-        st.query_params.clear()
         
         # Show success message
         st.success("✅ Google Drive authorization successful!")
@@ -83,7 +86,37 @@ if 'code' in params and 'state' in params:
             ''', unsafe_allow_html=True)
         st.stop()
     except Exception as e:
-        st.error(f"Error processing authorization: {str(e)}")
+        error_msg = str(e)
+        st.error(f"Error processing authorization: {error_msg}")
+        
+        # Provide more helpful information for specific errors
+        if "invalid_grant" in error_msg:
+            st.warning("""
+            This error typically occurs when:
+            1. The authorization code has already been used
+            2. The code has expired
+            3. The redirect URL doesn't match exactly
+            
+            Please try authorizing again from the main application.
+            """)
+            
+            # Add a direct link back to the main app
+            st.markdown(f'''
+                <a href="https://olgamdb.streamlit.app/" target="_self" style="text-decoration: none;">
+                    <button style="
+                        background-color: #4285f4;
+                        color: white;
+                        padding: 12px 24px;
+                        border: none;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        font-weight: bold;
+                        margin: 20px 0;">
+                        Return to Main Application
+                    </button>
+                </a>
+                ''', unsafe_allow_html=True)
         st.stop()
 
 # Custom CSS for better styling and force light theme
@@ -217,11 +250,17 @@ def get_google_creds():
     
     # Check if we have a token file
     if os.path.exists(TOKEN_PATH):
-        with open(TOKEN_PATH, 'rb') as token:
-            try:
-                creds = pickle.load(token)
-            except Exception as e:
-                st.error(f"Error loading credentials: {str(e)}")
+        try:
+            with open(TOKEN_PATH, 'rb') as token:
+                try:
+                    creds = pickle.load(token)
+                    st.success("✅ Google Drive authorization found!")
+                except Exception as e:
+                    st.error(f"Error loading credentials: {str(e)}")
+                    # Remove corrupted token file
+                    os.remove(TOKEN_PATH)
+        except Exception as e:
+            st.error(f"Error accessing token file: {str(e)}")
     
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
@@ -229,11 +268,20 @@ def get_google_creds():
             try:
                 creds.refresh(Request())
                 # Save the refreshed credentials
-                with open(TOKEN_PATH, 'wb') as token:
-                    pickle.dump(creds, token)
+                try:
+                    with open(TOKEN_PATH, 'wb') as token:
+                        pickle.dump(creds, token)
+                    st.success("✅ Refreshed Google Drive authorization!")
+                except Exception as save_error:
+                    st.error(f"Error saving refreshed credentials: {str(save_error)}")
             except Exception as e:
                 # If refresh fails, we need to get new credentials
-                os.remove(TOKEN_PATH) if os.path.exists(TOKEN_PATH) else None
+                st.warning("Your authorization has expired. Please authorize again.")
+                try:
+                    if os.path.exists(TOKEN_PATH):
+                        os.remove(TOKEN_PATH)
+                except Exception:
+                    pass
                 creds = None
         
         if not creds:
@@ -279,6 +327,22 @@ def get_google_creds():
             with st.expander("Authorization URL (if button doesn't work)"):
                 st.code(auth_url, language=None)
                 st.caption("Copy and paste this URL into your browser if the button doesn't work")
+            
+            # Add a debug button to check token path
+            with st.expander("Debug Information"):
+                st.write(f"Token path: {TOKEN_PATH}")
+                st.write(f"Token exists: {os.path.exists(TOKEN_PATH)}")
+                st.write(f"Token directory writable: {os.access(TOKEN_DIR, os.W_OK)}")
+                
+                if st.button("Delete Token File (if exists)"):
+                    try:
+                        if os.path.exists(TOKEN_PATH):
+                            os.remove(TOKEN_PATH)
+                            st.success("Token file deleted successfully!")
+                        else:
+                            st.info("No token file exists to delete.")
+                    except Exception as del_error:
+                        st.error(f"Error deleting token file: {str(del_error)}")
             
             st.stop()
     
