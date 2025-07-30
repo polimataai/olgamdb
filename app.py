@@ -15,6 +15,16 @@ import pickle
 from google.auth.transport.requests import Request
 from pathlib import Path
 
+# Check for OAuth code at startup
+params = st.experimental_get_query_params()
+if 'code' in params and 'state' in params:
+    st.session_state['oauth_code'] = params['code'][0]
+    st.session_state['oauth_state'] = params['state'][0]
+    # Clear URL parameters
+    st.experimental_set_query_params()
+    st.success("✅ Google Drive authorization successful!")
+    st.info("You can now close this tab and return to your original Streamlit tab.")
+
 # Force light theme and other configurations
 st.set_page_config(
     page_title="Olgam Plasma Center - Data Processor",
@@ -155,9 +165,8 @@ def get_google_creds():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Get the authorization code from URL parameters
-            params = st.experimental_get_query_params()
-            if 'code' in params:
+            # Check if we have a code in session state (from the redirect)
+            if 'oauth_code' in st.session_state:
                 try:
                     flow = InstalledAppFlow.from_client_config(
                         {
@@ -174,15 +183,13 @@ def get_google_creds():
                         scopes=['https://www.googleapis.com/auth/drive.file'],
                         redirect_uri="https://olgamdb.streamlit.app/"
                     )
-                    code = params['code'][0]
+                    code = st.session_state['oauth_code']
                     flow.fetch_token(code=code)
                     creds = flow.credentials
                     st.session_state['google_token'] = creds
-                    
-                    # Clear the URL parameters to avoid reusing the same code
-                    st.experimental_set_query_params()
+                    # Remove the code from session state to avoid reuse
+                    del st.session_state['oauth_code']
                     st.success("✅ Successfully authenticated with Google Drive!")
-                    st.info("Please continue with your file upload now.")
                 except Exception as e:
                     st.error(f"Authentication error: {str(e)}")
                     st.info("Please try authorizing again.")
@@ -190,7 +197,7 @@ def get_google_creds():
                     st.markdown(f'''
                         <h3>🔐 Google Drive Authorization Required</h3>
                         <p>To save excess files to your Google Drive, please authorize the application:</p>
-                        <a href="{auth_url}" target="_blank">
+                        <a href="{auth_url}" target="_self">
                             <button style="
                                 background-color: #4285f4;
                                 color: white;
@@ -214,9 +221,9 @@ def get_google_creds():
                         <li>Click the button below to authorize</li>
                         <li>Sign in with your Google account</li>
                         <li>Grant the requested permissions</li>
-                        <li>You will be redirected back to this app</li>
+                        <li>After authorization, <strong>reload this page</strong> to continue</li>
                     </ol>
-                    <a href="{auth_url}" target="_blank">
+                    <a href="{auth_url}" target="_self">
                         <button style="
                             background-color: #4285f4;
                             color: white;
@@ -229,7 +236,7 @@ def get_google_creds():
                             🔑 Authorize Google Drive Access
                         </button>
                     </a>
-                    <p style="color: #666; margin-top: 20px;">Note: After authorization, you will be redirected to <strong>https://olgamdb.streamlit.app/</strong>. Please return to this tab if it doesn't automatically.</p>
+                    <p style="color: #666; margin-top: 20px;">Note: After authorization, you will be redirected to a new page. Please reload this page after authorization.</p>
                     ''', unsafe_allow_html=True)
                 st.stop()
     
@@ -686,8 +693,13 @@ def append_to_upload_process(new_donors, really_updated):
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
     # Get Google credentials
-    creds = get_google_creds()
-    service = build('drive', 'v3', credentials=creds)
+    try:
+        creds = get_google_creds()
+        service = build('drive', 'v3', credentials=creds)
+    except Exception as auth_error:
+        st.error(f"Google Drive authentication error: {str(auth_error)}")
+        st.info("Please reload this page after completing the authorization.")
+        raise auth_error
     
     # Save the DataFrame as a temporary Excel file
     temp_file = None
