@@ -155,6 +155,8 @@ def get_google_auth_url():
         include_granted_scopes='true',
         prompt='consent'
     )
+    # Print the URL for debugging
+    print(f"Authorization URL: {auth_url}")
     return auth_url
 
 def get_google_creds():
@@ -203,13 +205,29 @@ def get_google_creds():
                         <p>To save excess files to your Google Drive, please authorize the application:</p>
                         ''', unsafe_allow_html=True)
                         
-                    # Use Streamlit's button instead of HTML button for better reliability
-                    if st.button("🔑 Retry Google Drive Authorization", type="primary"):
-                        st.markdown(f'<meta http-equiv="refresh" content="0;URL=\'{auth_url}\'" />', unsafe_allow_html=True)
-                        st.markdown(f'''
-                        <p>If you are not redirected automatically, 
-                        <a href="{auth_url}" target="_self">click here</a> to authorize.</p>
+                    # Use direct HTML link for better compatibility
+                    st.markdown(f'''
+                        <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+                            <button style="
+                                background-color: #4285f4;
+                                color: white;
+                                padding: 12px 24px;
+                                border: none;
+                                border-radius: 5px;
+                                cursor: pointer;
+                                font-size: 16px;
+                                font-weight: bold;
+                                display: inline-flex;
+                                align-items: center;
+                                margin: 10px 0;">
+                                <span style="margin-right: 8px;">🔑</span> Retry Google Drive Authorization
+                            </button>
+                        </a>
                         ''', unsafe_allow_html=True)
+                    
+                    # Provide direct URL for manual copy-paste
+                    st.code(auth_url, language=None)
+                    st.info("If the button doesn't work, copy and paste the URL above into your browser.")
                     st.stop()
             else:
                 auth_url = get_google_auth_url()
@@ -224,13 +242,29 @@ def get_google_creds():
                     </ol>
                     ''', unsafe_allow_html=True)
                     
-                # Use Streamlit's button instead of HTML button for better reliability
-                if st.button("🔑 Authorize Google Drive Access", type="primary"):
-                    st.markdown(f'<meta http-equiv="refresh" content="0;URL=\'{auth_url}\'" />', unsafe_allow_html=True)
-                    st.markdown(f'''
-                    <p>If you are not redirected automatically, 
-                    <a href="{auth_url}" target="_self">click here</a> to authorize.</p>
+                # Use direct HTML link for better compatibility
+                st.markdown(f'''
+                    <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+                        <button style="
+                            background-color: #4285f4;
+                            color: white;
+                            padding: 12px 24px;
+                            border: none;
+                            border-radius: 5px;
+                            cursor: pointer;
+                            font-size: 16px;
+                            font-weight: bold;
+                            display: inline-flex;
+                            align-items: center;
+                            margin: 10px 0;">
+                            <span style="margin-right: 8px;">🔑</span> Authorize Google Drive Access
+                        </button>
+                    </a>
                     ''', unsafe_allow_html=True)
+                
+                # Provide direct URL for manual copy-paste
+                st.code(auth_url, language=None)
+                st.info("If the button doesn't work, copy and paste the URL above into your browser.")
                 
                 st.markdown('''
                     <p style="color: #666; margin-top: 20px;">Note: After authorization, you will be redirected to a new page. Please reload this page after authorization.</p>
