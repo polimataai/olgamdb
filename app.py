@@ -134,11 +134,11 @@ def get_google_auth_url():
                 "token_uri": st.secrets["google_oauth"]["token_uri"],
                 "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
                 "client_secret": st.secrets["google_oauth"]["client_secret"],
-                "redirect_uris": ["https://olgamdb.streamlit.app/"]
+                "redirect_uris": ["http://localhost"]
             }
         },
         scopes=['https://www.googleapis.com/auth/drive.file'],
-        redirect_uri="https://olgamdb.streamlit.app/"
+        redirect_uri="http://localhost"
     )
     auth_url, _ = flow.authorization_url(prompt='consent')
     return auth_url
@@ -167,11 +167,11 @@ def get_google_creds():
                             "token_uri": st.secrets["google_oauth"]["token_uri"],
                             "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
                             "client_secret": st.secrets["google_oauth"]["client_secret"],
-                            "redirect_uris": ["https://olgamdb.streamlit.app/"]
+                            "redirect_uris": ["http://localhost"]
                         }
                     },
                     scopes=['https://www.googleapis.com/auth/drive.file'],
-                    redirect_uri="https://olgamdb.streamlit.app/"
+                    redirect_uri="http://localhost"
                 )
                 code = params['code'][0]
                 flow.fetch_token(code=code)
