@@ -580,7 +580,7 @@ def get_oauth_credentials_dict():
             "token_uri": secrets["token_uri"],
             "auth_provider_x509_cert_url": secrets["auth_provider_x509_cert_url"],
             "client_secret": secrets["client_secret"],
-            "redirect_uris": list(secrets["redirect_uris"])
+            "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
         }
     }
 
@@ -591,45 +591,44 @@ def get_drive_service_oauth():
     if 'drive_credentials' in st.session_state:
         return build('drive', 'v3', credentials=st.session_state['drive_credentials'])
     
-    # Check if we're in the OAuth callback
-    if 'oauth_code' in st.session_state:
-        creds_dict = get_oauth_credentials_dict()
-        flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
-        
-        # Exchange the authorization code for credentials
-        flow.fetch_token(code=st.session_state['oauth_code'])
-        st.session_state['drive_credentials'] = flow.credentials
-        del st.session_state['oauth_code']
-        
-        return build('drive', 'v3', credentials=flow.credentials)
-    
     # Start OAuth flow
     creds_dict = get_oauth_credentials_dict()
     flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
     
-    # Generate authorization URL
-    auth_url, _ = flow.authorization_url(prompt='consent')
+    # Generate authorization URL with proper redirect URI
+    auth_url, _ = flow.authorization_url(
+        prompt='consent',
+        access_type='offline',
+        redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+    )
     
     # Display the authorization URL to the user
     st.markdown("### 🔐 Google Drive Authentication Required")
     st.markdown("To upload files to your personal Google Drive, you need to authorize this application.")
-    st.markdown(f"**Please click the link below to authorize:**")
-    st.markdown(f"[🔗 Authorize Google Drive Access]({auth_url})")
+    st.markdown("**Please follow these steps:**")
+    st.markdown("1. Click the link below to open Google authorization")
+    st.markdown("2. Sign in with your Google account")
+    st.markdown("3. Grant permission to access your Google Drive")
+    st.markdown("4. Copy the authorization code that appears")
+    st.markdown("5. Paste the code in the field below")
+    
+    st.markdown(f"**[🔗 Click here to authorize Google Drive access]({auth_url})**")
     
     # Add a text input for the user to paste the authorization code
-    st.markdown("**After authorization, copy the authorization code and paste it below:**")
-    auth_code = st.text_input("Authorization Code:", type="password", key="auth_code_input")
+    st.markdown("**Paste the authorization code here:**")
+    auth_code = st.text_input("Authorization Code:", type="password", key="auth_code_input", 
+                             help="Copy the code from Google and paste it here")
     
     if auth_code:
         try:
             # Exchange the authorization code for credentials
-            flow.fetch_token(code=auth_code)
+            flow.fetch_token(code=auth_code, redirect_uri='urn:ietf:wg:oauth:2.0:oob')
             st.session_state['drive_credentials'] = flow.credentials
-            st.success("✅ Authentication successful! You can now upload files.")
+            st.success("✅ Authentication successful! You can now upload files to your Google Drive.")
             st.experimental_rerun()
         except Exception as e:
             st.error(f"❌ Authentication failed: {str(e)}")
-            st.info("Please try again with a valid authorization code.")
+            st.info("Please check the authorization code and try again.")
     
     return None
 
@@ -791,7 +790,11 @@ def upload_raw_to_gsheet(df):
             new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
             try:
                 link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} of the data was saved to your personal Google Drive: [Open excess file part {file_count}]({link})")
+                if link:
+                    st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} of the data was saved to your personal Google Drive: [Open excess file part {file_count}]({link})")
+                else:
+                    # File was saved locally
+                    st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} was saved locally.")
             except Exception as move_err:
                 st.warning(f"Could not upload file part {file_count} to your personal Google Drive: {move_err}")
                 # Try to save locally as fallback
