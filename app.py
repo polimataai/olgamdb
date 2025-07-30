@@ -33,8 +33,13 @@ if 'code' in params and 'state' in params:
     
     # Show success message and stop execution
     st.success("✅ Google Drive authorization successful!")
-    st.info("You can now close this tab and return to your original Streamlit tab.")
-    st.stop()
+    st.info("You can now close this tab. The authorization has been saved automatically.")
+    
+    # Add a button to help user continue
+    if st.button("Continue with File Processing"):
+        st.rerun()
+    else:
+        st.stop()
 
 # Custom CSS for better styling and force light theme
 st.markdown("""
@@ -235,7 +240,8 @@ def get_google_creds():
                         <ol style="margin-top: 10px;">
                             <li>Click the button to open Google authorization</li>
                             <li>Sign in with your Google account</li>
-                            <li>After authorizing, <strong>reload this page</strong></li>
+                            <li>After authorizing, you'll see a success message</li>
+                            <li>The authorization is saved automatically</li>
                         </ol>
                         """, unsafe_allow_html=True)
                     
@@ -279,7 +285,8 @@ def get_google_creds():
                     <ol style="margin-top: 10px;">
                         <li>Click the button to open Google authorization</li>
                         <li>Sign in with your Google account</li>
-                        <li>After authorizing, <strong>reload this page</strong></li>
+                        <li>After authorizing, you'll see a success message</li>
+                        <li>The authorization is saved automatically</li>
                     </ol>
                     """, unsafe_allow_html=True)
                 
