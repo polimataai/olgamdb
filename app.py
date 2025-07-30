@@ -29,13 +29,20 @@ import tempfile
 TOKEN_DIR = tempfile.gettempdir()
 TOKEN_PATH = os.path.join(TOKEN_DIR, "olgamdb_token.pickle")
 
+# Initialize session state for OAuth flow
+if 'oauth_state' not in st.session_state:
+    st.session_state.oauth_state = None
+
 # Check for OAuth code at startup
 params = st.query_params
 if 'code' in params and 'state' in params:
     # We're in the OAuth callback page
     try:
-        # Get the code and immediately clear URL parameters to prevent reuse
+        # Get the code
         code = params['code'][0]
+        state = params['state'][0]
+        
+        # Clear URL parameters to prevent reuse
         st.query_params.clear()
         
         # Create the flow with the same parameters as the original request
@@ -44,9 +51,9 @@ if 'code' in params and 'state' in params:
                 "web": {
                     "client_id": st.secrets["google_oauth"]["client_id"],
                     "project_id": st.secrets["google_oauth"]["project_id"],
-                    "auth_uri": st.secrets["google_oauth"]["auth_uri"],
-                    "token_uri": st.secrets["google_oauth"]["token_uri"],
-                    "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
                     "client_secret": st.secrets["google_oauth"]["client_secret"],
                     "redirect_uris": ["https://olgamdb.streamlit.app/"]
                 }
@@ -67,31 +74,29 @@ if 'code' in params and 'state' in params:
         print(f"Token saved successfully to: {TOKEN_PATH}")
         print(f"Token file exists after save: {os.path.exists(TOKEN_PATH)}")
         
-        # Show success message
-        st.success("✅ Google Drive authorization successful!")
-        st.info("The authorization has been saved. You can now close this tab and continue with your file processing.")
+        # Set session state to indicate successful authorization
+        st.session_state.oauth_state = "success"
         
-        # Add a direct link back to the main app
-        st.markdown(f'''
-            <a href="https://olgamdb.streamlit.app/" target="_self" style="text-decoration: none;">
-                <button style="
-                    background-color: #4CAF50;
-                    color: white;
-                    padding: 12px 24px;
-                    border: none;
-                    border-radius: 5px;
-                    cursor: pointer;
-                    font-size: 16px;
-                    font-weight: bold;
-                    margin: 20px 0;">
-                    Return to Main Application
-                </button>
-            </a>
-            ''', unsafe_allow_html=True)
+        # Show success message and auto-refresh
+        st.success("✅ Google Drive authorization successful!")
+        st.info("The page will automatically reload in 3 seconds...")
+        
+        # Add JavaScript to auto-refresh the page
+        st.markdown("""
+        <script>
+            setTimeout(function() {
+                window.location.href = 'https://olgamdb.streamlit.app/';
+            }, 3000);
+        </script>
+        """, unsafe_allow_html=True)
+        
         st.stop()
     except Exception as e:
         error_msg = str(e)
         st.error(f"Error processing authorization: {error_msg}")
+        
+        # Set session state to indicate failed authorization
+        st.session_state.oauth_state = "error"
         
         # Provide more helpful information for specific errors
         if "invalid_grant" in error_msg:
@@ -104,9 +109,9 @@ if 'code' in params and 'state' in params:
             Please try authorizing again from the main application.
             """)
             
-            # Add a button to return to main application
+            # Add a button to return to main application with JavaScript auto-click
             st.markdown('''
-            <a href="https://olgamdb.streamlit.app/" target="_self" style="text-decoration: none;">
+            <a href="https://olgamdb.streamlit.app/" id="return-btn" style="text-decoration: none;">
                 <button style="
                     background-color: #4285f4;
                     color: white;
@@ -120,6 +125,11 @@ if 'code' in params and 'state' in params:
                     Return to Main Application
                 </button>
             </a>
+            <script>
+                setTimeout(function() {
+                    document.getElementById('return-btn').click();
+                }, 3000);
+            </script>
             ''', unsafe_allow_html=True)
         st.stop()
 
@@ -230,9 +240,9 @@ def get_google_auth_url():
             "web": {
                 "client_id": st.secrets["google_oauth"]["client_id"],
                 "project_id": st.secrets["google_oauth"]["project_id"],
-                "auth_uri": st.secrets["google_oauth"]["auth_uri"],
-                "token_uri": st.secrets["google_oauth"]["token_uri"],
-                "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
                 "client_secret": st.secrets["google_oauth"]["client_secret"],
                 "redirect_uris": ["https://olgamdb.streamlit.app/"]
             }
@@ -240,10 +250,15 @@ def get_google_auth_url():
         scopes=['https://www.googleapis.com/auth/drive.file'],
         redirect_uri="https://olgamdb.streamlit.app/"
     )
+    
+    # Use the session state parameter if available
+    state_param = st.session_state.get('oauth_state_param', None)
+    
     auth_url, _ = flow.authorization_url(
         access_type='offline',
         include_granted_scopes='true',
-        prompt='consent'
+        prompt='consent',
+        state=state_param
     )
     # Print the URL for debugging
     print(f"Authorization URL: {auth_url}")
@@ -289,6 +304,11 @@ def get_google_creds():
                 creds = None
         
         if not creds:
+            # Generate a unique state parameter for this session
+            if 'oauth_state_param' not in st.session_state:
+                import uuid
+                st.session_state.oauth_state_param = str(uuid.uuid4())[:8]
+            
             auth_url = get_google_auth_url()
             
             st.markdown("""
@@ -296,52 +316,48 @@ def get_google_creds():
             <p>To save excess files to your Google Drive, we need your authorization:</p>
             """, unsafe_allow_html=True)
             
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                # Simple link button
-                st.markdown(f'''
-                <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+            # Use a direct approach with a single button
+            st.markdown(f'''
+            <div style="text-align: center; margin: 20px 0;">
+                <a href="{auth_url}" target="_self" style="text-decoration: none;">
                     <button style="
                         background-color: #4285f4;
                         color: white;
-                        padding: 12px 24px;
+                        padding: 15px 30px;
                         border: none;
                         border-radius: 5px;
                         cursor: pointer;
-                        font-size: 16px;
+                        font-size: 18px;
                         font-weight: bold;
                         display: inline-flex;
-                        align-items: center;
-                        margin: 10px 0;">
-                        <span style="margin-right: 8px;">🔑</span> Authorize Access
+                        align-items: center;">
+                        <span style="margin-right: 10px;">🔑</span> Authorize Google Drive Access
                     </button>
                 </a>
-                ''', unsafe_allow_html=True)
+            </div>
             
-            with col2:
-                st.markdown("""
-                <ol style="margin-top: 10px;">
-                    <li>Click the button to open Google authorization</li>
-                    <li>Sign in with your Google account</li>
-                    <li>After authorizing, you'll be redirected to a confirmation page</li>
-                    <li>Return to this tab and refresh the page to continue</li>
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p style="font-weight: bold; margin-bottom: 10px;">Instructions:</p>
+                <ol>
+                    <li>Click the button above to start Google authorization</li>
+                    <li>Sign in with your Google account when prompted</li>
+                    <li>Grant the requested permissions</li>
+                    <li>You'll be automatically redirected back to the application</li>
                 </ol>
-                """, unsafe_allow_html=True)
+            </div>
+            ''', unsafe_allow_html=True)
             
             # Provide direct URL for manual copy-paste
             with st.expander("Authorization URL (if button doesn't work)"):
                 st.code(auth_url, language=None)
                 st.caption("Copy and paste this URL into your browser if the button doesn't work")
             
-            # Add a refresh button
-            if st.button("🔄 Refresh Page (after authorization)"):
-                st.rerun()
-            
             # Add a debug button to check token path
             with st.expander("Debug Information"):
                 st.write(f"Token path: {TOKEN_PATH}")
                 st.write(f"Token exists: {os.path.exists(TOKEN_PATH)}")
                 st.write(f"Token directory writable: {os.access(TOKEN_DIR, os.W_OK)}")
+                st.write(f"Session state: {st.session_state.get('oauth_state', 'Not set')}")
                 
                 if st.button("Delete Token File (if exists)"):
                     try:
@@ -810,41 +826,89 @@ def save_excel_to_drive_personal(df, filename, folder_id=None):
     # Get Google credentials
     try:
         creds = get_google_creds()
-        service = build('drive', 'v3', credentials=creds)
-    except Exception as auth_error:
-        st.error(f"Google Drive authentication error: {str(auth_error)}")
-        st.info("Please reload this page after completing the authorization.")
-        raise auth_error
-    
-    # Save the DataFrame as a temporary Excel file
-    temp_file = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            temp_file = tmp.name
-            df.to_excel(temp_file, index=False)
         
-        file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
-        if folder_id:
-            file_metadata['parents'] = [folder_id]
-        media = MediaFileUpload(temp_file, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        file = service.files().create(body=file_metadata, media_body=media, fields='id,webViewLink').execute()
-        return file.get('webViewLink')
-    except Exception as e:
-        raise e
-    finally:
-        # Clean up temporary file with retry mechanism
-        if temp_file and os.path.exists(temp_file):
+        # If we got here, we have valid credentials
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Create a temporary file
+        temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+        temp_file_path = temp_file.name
+        temp_file.close()  # Close the file so Excel can open it
+        
+        try:
+            # Save DataFrame to Excel
+            with pd.ExcelWriter(temp_file_path, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            
+            # Define file metadata
+            file_metadata = {
+                'name': filename,
+                'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            }
+            
+            # If folder_id is provided, add it to the parent folder
+            if folder_id:
+                file_metadata['parents'] = [folder_id]
+            
+            # Create media
+            media = MediaFileUpload(
+                temp_file_path,
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                resumable=True
+            )
+            
+            # Upload file
+            file = drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id,webViewLink'
+            ).execute()
+            
+            st.success(f"✅ File uploaded to Google Drive: {filename}")
+            return file.get('webViewLink')
+        
+        except Exception as e:
+            st.error(f"Could not upload file {filename} to your personal Google Drive: {str(e)}")
+            
+            # Try to save locally as fallback
             try:
-                os.unlink(temp_file)
-            except OSError:
-                # If immediate deletion fails, try again after a short delay
-                import time
-                time.sleep(0.1)
+                local_path = f"{filename}"
+                df.to_excel(local_path, index=False)
+                st.info(f"File saved locally as {local_path} instead.")
+            except Exception as local_e:
+                st.error(f"Could not save file locally either: {str(local_e)}")
+            
+            return None
+        
+        finally:
+            # Clean up the temporary file with retry
+            max_retries = 3
+            for i in range(max_retries):
                 try:
-                    os.unlink(temp_file)
-                except OSError:
-                    # If still fails, just log it but don't raise error
-                    st.warning(f"Could not delete temporary file: {temp_file}")
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                    break
+                except Exception as e:
+                    if i < max_retries - 1:
+                        # Wait a bit before retrying
+                        import time
+                        time.sleep(1)
+                    else:
+                        st.warning(f"Could not delete temporary file: {str(e)}")
+    
+    except Exception as auth_e:
+        error_msg = str(auth_e)
+        st.error(f"Authentication error: {error_msg}")
+        
+        # Try to save locally as fallback
+        try:
+            local_path = f"{filename}"
+            df.to_excel(local_path, index=False)
+            st.info(f"File saved locally as {local_path} instead.")
+            return local_path
+        except Exception as local_e:
+            st.error(f"Could not save file locally either: {str(local_e)}")
+            return None
 
 def upload_raw_to_gsheet(df):
     """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to your personal Google Drive using OAuth, in parts of maximum 50,000 rows."""
