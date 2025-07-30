@@ -847,7 +847,7 @@ def upload_raw_to_gsheet(df):
                 st.success(f"✅ Part {file_count} of the data was saved to your Google Drive")
                 st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
             except Exception as move_err:
-                                 error_msg = str(move_err)
+                error_msg = str(move_err)
                 if "could not locate runnable browser" in error_msg or "redirect_uri_mismatch" in error_msg or "invalid_grant" in error_msg or "accounts.google.com" in error_msg:
                     st.error("Google Drive authentication required")
                     st.info("Please authorize Google Drive access to save your files")
