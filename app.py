@@ -105,47 +105,22 @@ if 'code' in params and 'state' in params:
             """)
             
             # Add a button to retry authorization in a popup
+            auth_url = get_google_auth_url()
             st.markdown(f'''
-            <button onclick="retryOAuthPopup()" style="
-                background-color: #4285f4;
-                color: white;
-                padding: 12px 24px;
-                border: none;
-                border-radius: 5px;
-                cursor: pointer;
-                font-size: 16px;
-                font-weight: bold;
-                margin: 20px 0;">
-                Try Again in Popup
-            </button>
-            
-            <script>
-            function retryOAuthPopup() {{
-                // Open popup window centered on screen
-                const width = 600;
-                const height = 700;
-                const left = (screen.width/2)-(width/2);
-                const top = (screen.height/2)-(height/2);
-                
-                const popup = window.open(
-                    "{get_google_auth_url()}", 
-                    "GoogleOAuth", 
-                    `width=${{width}},height=${{height}},left=${{left}},top=${{top}},toolbar=0,scrollbars=1,status=1,resizable=1,location=1`
-                );
-                
-                // Reload the parent page after popup is closed or after 5 seconds
-                const checkInterval = setInterval(function() {{
-                    if (popup.closed) {{
-                        window.location.reload();
-                        clearInterval(checkInterval);
-                    }}
-                }}, 1000);
-                
-                setTimeout(function() {{
-                    window.location.reload();
-                }}, 10000);
-            }}
-            </script>
+            <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+                <button style="
+                    background-color: #4285f4;
+                    color: white;
+                    padding: 12px 24px;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    font-weight: bold;
+                    margin: 20px 0;">
+                    Try Again
+                </button>
+            </a>
             ''', unsafe_allow_html=True)
         st.stop()
 
@@ -324,47 +299,24 @@ def get_google_creds():
             
             col1, col2 = st.columns([1, 2])
             with col1:
-                # Using JavaScript to open a popup window
+                # Simple link button
                 st.markdown(f'''
-                <button onclick="openOAuthPopup()" style="
-                    background-color: #4285f4;
-                    color: white;
-                    padding: 12px 24px;
-                    border: none;
-                    border-radius: 5px;
-                    cursor: pointer;
-                    font-size: 16px;
-                    font-weight: bold;
-                    display: inline-flex;
-                    align-items: center;
-                    margin: 10px 0;">
-                    <span style="margin-right: 8px;">🔑</span> Authorize Access
-                </button>
-
-                <script>
-                function openOAuthPopup() {
-                    // Open popup window centered on screen
-                    const width = 600;
-                    const height = 700;
-                    const left = (screen.width/2)-(width/2);
-                    const top = (screen.height/2)-(height/2);
-                    
-                    window.open(
-                        "{auth_url}", 
-                        "GoogleOAuth", 
-                        `width=${width},height=${height},left=${left},top=${top},toolbar=0,scrollbars=1,status=1,resizable=1,location=1`
-                    );
-                    
-                    // Set a timer to check for token periodically
-                    const checkInterval = setInterval(function() {{
-                        // Reload the parent page after 5 seconds to check for token
-                        setTimeout(function() {{
-                            window.location.reload();
-                        }}, 5000);
-                        clearInterval(checkInterval);
-                    }}, 1000);
-                }
-                </script>
+                <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+                    <button style="
+                        background-color: #4285f4;
+                        color: white;
+                        padding: 12px 24px;
+                        border: none;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        font-size: 16px;
+                        font-weight: bold;
+                        display: inline-flex;
+                        align-items: center;
+                        margin: 10px 0;">
+                        <span style="margin-right: 8px;">🔑</span> Authorize Access
+                    </button>
+                </a>
                 ''', unsafe_allow_html=True)
             
             with col2:
