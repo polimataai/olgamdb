@@ -16,12 +16,12 @@ from google.auth.transport.requests import Request
 from pathlib import Path
 
 # Check for OAuth code at startup
-params = st.experimental_get_query_params()
+params = st.query_params
 if 'code' in params and 'state' in params:
     st.session_state['oauth_code'] = params['code'][0]
     st.session_state['oauth_state'] = params['state'][0]
     # Clear URL parameters
-    st.experimental_set_query_params()
+    st.query_params.clear()
     st.success("✅ Google Drive authorization successful!")
     st.info("You can now close this tab and return to your original Streamlit tab.")
 
@@ -150,7 +150,11 @@ def get_google_auth_url():
         scopes=['https://www.googleapis.com/auth/drive.file'],
         redirect_uri="https://olgamdb.streamlit.app/"
     )
-    auth_url, _ = flow.authorization_url(prompt='consent')
+    auth_url, _ = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
     return auth_url
 
 def get_google_creds():
@@ -197,19 +201,14 @@ def get_google_creds():
                     st.markdown(f'''
                         <h3>🔐 Google Drive Authorization Required</h3>
                         <p>To save excess files to your Google Drive, please authorize the application:</p>
-                        <a href="{auth_url}" target="_self">
-                            <button style="
-                                background-color: #4285f4;
-                                color: white;
-                                padding: 10px 20px;
-                                border: none;
-                                border-radius: 5px;
-                                cursor: pointer;
-                                font-size: 16px;
-                                margin: 10px 0;">
-                                🔑 Authorize Google Drive Access
-                            </button>
-                        </a>
+                        ''', unsafe_allow_html=True)
+                        
+                    # Use Streamlit's button instead of HTML button for better reliability
+                    if st.button("🔑 Retry Google Drive Authorization", type="primary"):
+                        st.markdown(f'<meta http-equiv="refresh" content="0;URL=\'{auth_url}\'" />', unsafe_allow_html=True)
+                        st.markdown(f'''
+                        <p>If you are not redirected automatically, 
+                        <a href="{auth_url}" target="_self">click here</a> to authorize.</p>
                         ''', unsafe_allow_html=True)
                     st.stop()
             else:
@@ -223,19 +222,17 @@ def get_google_creds():
                         <li>Grant the requested permissions</li>
                         <li>After authorization, <strong>reload this page</strong> to continue</li>
                     </ol>
-                    <a href="{auth_url}" target="_self">
-                        <button style="
-                            background-color: #4285f4;
-                            color: white;
-                            padding: 10px 20px;
-                            border: none;
-                            border-radius: 5px;
-                            cursor: pointer;
-                            font-size: 16px;
-                            margin: 10px 0;">
-                            🔑 Authorize Google Drive Access
-                        </button>
-                    </a>
+                    ''', unsafe_allow_html=True)
+                    
+                # Use Streamlit's button instead of HTML button for better reliability
+                if st.button("🔑 Authorize Google Drive Access", type="primary"):
+                    st.markdown(f'<meta http-equiv="refresh" content="0;URL=\'{auth_url}\'" />', unsafe_allow_html=True)
+                    st.markdown(f'''
+                    <p>If you are not redirected automatically, 
+                    <a href="{auth_url}" target="_self">click here</a> to authorize.</p>
+                    ''', unsafe_allow_html=True)
+                
+                st.markdown('''
                     <p style="color: #666; margin-top: 20px;">Note: After authorization, you will be redirected to a new page. Please reload this page after authorization.</p>
                     ''', unsafe_allow_html=True)
                 st.stop()
@@ -850,9 +847,11 @@ def upload_raw_to_gsheet(df):
                 st.success(f"✅ Part {file_count} of the data was saved to your Google Drive")
                 st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
             except Exception as move_err:
-                error_msg = str(move_err)
-                if "could not locate runnable browser" in error_msg or "redirect_uri_mismatch" in error_msg or "invalid_grant" in error_msg:
+                                 error_msg = str(move_err)
+                if "could not locate runnable browser" in error_msg or "redirect_uri_mismatch" in error_msg or "invalid_grant" in error_msg or "accounts.google.com" in error_msg:
                     st.error("Google Drive authentication required")
+                    st.info("Please authorize Google Drive access to save your files")
+                    
                     # Get fresh credentials
                     try:
                         creds = get_google_creds()
@@ -862,22 +861,32 @@ def upload_raw_to_gsheet(df):
                         st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
                     except Exception as auth_err:
                         st.error(f"Authentication failed: {str(auth_err)}")
-                        # Try to save locally as fallback
-                        try:
-                            local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                            df_chunk.to_excel(local_filename, index=False)
-                            st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
-                        except Exception as local_err:
-                            st.error(f"Failed to save file part {file_count} locally: {local_err}")
+                        st.warning("We need Google Drive access to save your files. Please try again with the authorization button above.")
+                        
+                        # Create a download button as a last resort
+                        buffer = io.BytesIO()
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df_chunk.to_excel(writer, index=False)
+                        
+                        st.download_button(
+                            label=f"⬇️ Download Part {file_count} as Excel",
+                            data=buffer.getvalue(),
+                            file_name=f"Olgam_Data_Excess_Part_{file_count}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                 else:
                     st.warning(f"Could not upload file part {file_count} to your Google Drive: {move_err}")
-                    # Try to save locally as fallback
-                    try:
-                        local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                        df_chunk.to_excel(local_filename, index=False)
-                        st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
-                    except Exception as local_err:
-                        st.error(f"Failed to save file part {file_count} locally: {local_err}")
+                    # Create a download button as a last resort
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        df_chunk.to_excel(writer, index=False)
+                    
+                    st.download_button(
+                        label=f"⬇️ Download Part {file_count} as Excel",
+                        data=buffer.getvalue(),
+                        file_name=f"Olgam_Data_Excess_Part_{file_count}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
             file_count += 1
         
         return True
