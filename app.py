@@ -595,11 +595,10 @@ def get_drive_service_oauth():
     creds_dict = get_oauth_credentials_dict()
     flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
     
-    # Generate authorization URL with proper redirect URI
+    # Generate authorization URL without specifying redirect_uri (it's already in the config)
     auth_url, _ = flow.authorization_url(
         prompt='consent',
-        access_type='offline',
-        redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+        access_type='offline'
     )
     
     # Display the authorization URL to the user
@@ -621,8 +620,8 @@ def get_drive_service_oauth():
     
     if auth_code:
         try:
-            # Exchange the authorization code for credentials
-            flow.fetch_token(code=auth_code, redirect_uri='urn:ietf:wg:oauth:2.0:oob')
+            # Exchange the authorization code for credentials without specifying redirect_uri
+            flow.fetch_token(code=auth_code)
             st.session_state['drive_credentials'] = flow.credentials
             st.success("✅ Authentication successful! You can now upload files to your Google Drive.")
             st.experimental_rerun()
