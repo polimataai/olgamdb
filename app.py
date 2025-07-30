@@ -104,49 +104,49 @@ if 'code' in params and 'state' in params:
             Please try authorizing again from the main application.
             """)
             
-                         # Add a button to retry authorization in a popup
-             st.markdown(f'''
-                 <button onclick="retryOAuthPopup()" style="
-                     background-color: #4285f4;
-                     color: white;
-                     padding: 12px 24px;
-                     border: none;
-                     border-radius: 5px;
-                     cursor: pointer;
-                     font-size: 16px;
-                     font-weight: bold;
-                     margin: 20px 0;">
-                     Try Again in Popup
-                 </button>
-                 
-                 <script>
-                 function retryOAuthPopup() {{
-                     // Open popup window centered on screen
-                     const width = 600;
-                     const height = 700;
-                     const left = (screen.width/2)-(width/2);
-                     const top = (screen.height/2)-(height/2);
-                     
-                     const popup = window.open(
-                         "{get_google_auth_url()}", 
-                         "GoogleOAuth", 
-                         `width=${{width}},height=${{height}},left=${{left}},top=${{top}},toolbar=0,scrollbars=1,status=1,resizable=1,location=1`
-                     );
-                     
-                     // Reload the parent page after popup is closed or after 5 seconds
-                     const checkInterval = setInterval(function() {{
-                         if (popup.closed) {{
-                             window.location.reload();
-                             clearInterval(checkInterval);
-                         }}
-                     }}, 1000);
-                     
-                     setTimeout(function() {{
-                         window.location.reload();
-                     }}, 10000);
-                 }}
-                 </script>
-                 ''', unsafe_allow_html=True)
+            # Add a button to retry authorization in a popup
+            st.markdown(f'''
+            <button onclick="retryOAuthPopup()" style="
+                background-color: #4285f4;
+                color: white;
+                padding: 12px 24px;
+                border: none;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 16px;
+                font-weight: bold;
+                margin: 20px 0;">
+                Try Again in Popup
+            </button>
+            
+            <script>
+            function retryOAuthPopup() {{
+                // Open popup window centered on screen
+                const width = 600;
+                const height = 700;
+                const left = (screen.width/2)-(width/2);
+                const top = (screen.height/2)-(height/2);
+                
+                const popup = window.open(
+                    "{get_google_auth_url()}", 
+                    "GoogleOAuth", 
+                    `width=${{width}},height=${{height}},left=${{left}},top=${{top}},toolbar=0,scrollbars=1,status=1,resizable=1,location=1`
+                );
+                
+                // Reload the parent page after popup is closed or after 5 seconds
+                const checkInterval = setInterval(function() {{
+                    if (popup.closed) {{
+                        window.location.reload();
+                        clearInterval(checkInterval);
+                    }}
+                }}, 1000);
+                
+                setTimeout(function() {{
+                    window.location.reload();
+                }}, 10000);
+            }}
+            </script>
+            ''', unsafe_allow_html=True)
         st.stop()
 
 # Custom CSS for better styling and force light theme
