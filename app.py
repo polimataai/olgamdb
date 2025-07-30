@@ -7,7 +7,6 @@ import json
 import os
 import tempfile
 import datetime
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import io
@@ -568,66 +567,28 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
-def get_oauth_credentials_dict():
-    secrets = st.secrets["google_oauth"]
-    return {
-        "installed": {
-            "client_id": secrets["client_id"],
-            "project_id": secrets["project_id"],
-            "auth_uri": secrets["auth_uri"],
-            "token_uri": secrets["token_uri"],
-            "auth_provider_x509_cert_url": secrets["auth_provider_x509_cert_url"],
-            "client_secret": secrets["client_secret"],
-            "redirect_uris": list(secrets["redirect_uris"])
-        }
-    }
 
-def get_drive_service_oauth():
-    SCOPES = ['https://www.googleapis.com/auth/drive.file']
-    
-    # Check if we're in Streamlit Cloud (no browser available)
-    try:
-        # Try to use service account credentials first (works in Streamlit Cloud)
-        from google.oauth2 import service_account
-        
-        # Create service account credentials dictionary
-        service_account_info = {
-            "type": "service_account",
-            "project_id": "third-hangout-387516",
-            "private_key_id": st.secrets["private_key_id"],
-            "private_key": st.secrets["google_credentials"],
-            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-            "client_id": "114223947184571105588",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-            "universe_domain": "googleapis.com"
-        }
-        
-        credentials = service_account.Credentials.from_service_account_info(
-            service_account_info, scopes=SCOPES
-        )
-        service = build('drive', 'v3', credentials=credentials)
-        return service
-        
-    except Exception as e:
-        st.warning(f"Service account authentication failed: {e}")
-        st.info("Falling back to OAuth authentication...")
-        
-        # Fallback to OAuth (for local development)
-        try:
-            creds_dict = get_oauth_credentials_dict()
-            flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
-            creds = flow.run_local_server(port=0)
-            service = build('drive', 'v3', credentials=creds)
-            return service
-        except Exception as oauth_error:
-            st.error(f"OAuth authentication also failed: {oauth_error}")
-            raise Exception("Could not authenticate with Google Drive. Please check your credentials.")
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
-    service = get_drive_service_oauth()
+    # Use service account credentials instead of OAuth for better compatibility
+    scope = ['https://www.googleapis.com/auth/drive.file']
+    credentials_dict = {
+        "type": "service_account",
+        "project_id": "third-hangout-387516",
+        "private_key_id": st.secrets["private_key_id"],
+        "private_key": st.secrets["google_credentials"],
+        "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
+        "client_id": "114223947184571105588",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
+        "universe_domain": "googleapis.com"
+    }
+    
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+    service = build('drive', 'v3', credentials=credentials)
+    
     # Save the DataFrame as a temporary Excel file
     temp_file = None
     try:
@@ -635,32 +596,11 @@ def save_excel_to_drive_personal(df, filename, folder_id=None):
             temp_file = tmp.name
             df.to_excel(temp_file, index=False)
         
-        file_metadata = {
-            'name': filename, 
-            'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        }
-        
-        # If folder_id is provided, try to use it
+        file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
         if folder_id:
-            try:
-                file_metadata['parents'] = [folder_id]
-            except Exception as e:
-                st.warning(f"Could not access folder {folder_id}: {e}")
-                # Continue without folder_id
-        
+            file_metadata['parents'] = [folder_id]
         media = MediaFileUpload(temp_file, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         file = service.files().create(body=file_metadata, media_body=media, fields='id,webViewLink').execute()
-        
-        # Make the file publicly accessible
-        try:
-            service.permissions().create(
-                fileId=file.get('id'),
-                body={'type': 'anyone', 'role': 'reader'},
-                fields='id'
-            ).execute()
-        except Exception as e:
-            st.warning(f"Could not make file public: {e}")
-        
         return file.get('webViewLink')
     except Exception as e:
         raise e
