@@ -585,7 +585,7 @@ def get_oauth_credentials_dict():
 def get_drive_service_oauth():
     SCOPES = ['https://www.googleapis.com/auth/drive.file']
     creds = None
-    # En Streamlit Cloud no hay persistencia, así que siempre pedirá autorización
+    # In Streamlit Cloud there's no persistence, so it will always request authorization
     creds_dict = get_oauth_credentials_dict()
     flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
     creds = flow.run_local_server(port=0)
@@ -594,20 +594,38 @@ def get_drive_service_oauth():
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
     service = get_drive_service_oauth()
-    # Guardar el DataFrame como archivo Excel temporal
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-        df.to_excel(tmp.name, index=False)
-        tmp.flush()
+    # Save the DataFrame as a temporary Excel file
+    temp_file = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            temp_file = tmp.name
+            df.to_excel(temp_file, index=False)
+        
         file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
         if folder_id:
             file_metadata['parents'] = [folder_id]
-        media = MediaFileUpload(tmp.name, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        media = MediaFileUpload(temp_file, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         file = service.files().create(body=file_metadata, media_body=media, fields='id,webViewLink').execute()
-        os.unlink(tmp.name)
-    return file.get('webViewLink')
+        return file.get('webViewLink')
+    except Exception as e:
+        raise e
+    finally:
+        # Clean up temporary file with retry mechanism
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.unlink(temp_file)
+            except OSError:
+                # If immediate deletion fails, try again after a short delay
+                import time
+                time.sleep(0.1)
+                try:
+                    os.unlink(temp_file)
+                except OSError:
+                    # If still fails, just log it but don't raise error
+                    st.warning(f"Could not delete temporary file: {temp_file}")
 
 def upload_raw_to_gsheet(df):
-    """Sube el DataFrame original validado a la hoja de Google Sheets especificada, agregando al final. Si se excede el límite de celdas, los archivos excedentes se suben como Excel (.xlsx) a tu Google Drive personal usando OAuth, en partes de máximo 50,000 filas."""
+    """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to your personal Google Drive using OAuth, in parts of maximum 50,000 rows."""
     try:
         import gspread
         from gspread.exceptions import APIError
@@ -688,7 +706,7 @@ def upload_raw_to_gsheet(df):
                 )
                 inserted_in_main = True
             except APIError as api_err:
-                st.warning("No se pudo insertar en la hoja principal por límite de celdas. El resto se guardará en archivos nuevos.")
+                st.warning("Could not insert into main sheet due to cell limit. The rest will be saved in new files.")
                 start_idx = 0
         else:
             if max_rows_to_insert > 0:
@@ -704,12 +722,12 @@ def upload_raw_to_gsheet(df):
                     start_idx = max_rows_to_insert
                     inserted_in_main = True
                 except APIError as api_err:
-                    st.warning("No se pudo insertar en la hoja principal por límite de celdas. El resto se guardará en archivos nuevos.")
+                    st.warning("Could not insert into main sheet due to cell limit. The rest will be saved in new files.")
                     start_idx = 0
             else:
                 start_idx = 0
         
-        # Ahora, crear archivos Excel de máximo 50,000 filas y subirlos a tu Drive personal
+        # Now, create Excel files with maximum 50,000 rows and upload them to your personal Drive
         file_count = 1
         data_rest = data_to_upload[start_idx:] if not inserted_in_main else data_to_upload[start_idx:]
         folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'
@@ -719,17 +737,24 @@ def upload_raw_to_gsheet(df):
             data_chunk = data_rest[:max_excel_rows]
             data_rest = data_rest[max_excel_rows:]
             df_chunk = pd.DataFrame(data_chunk, columns=df_clean.columns)
-            new_title = f"Datos_Olgam_Excedente_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_parte{file_count}.xlsx"
+            new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
             try:
                 link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                st.info(f"⚠️ El archivo original excede el límite de celdas de Google Sheets. Parte {file_count} de los datos se guardó en tu Google Drive personal: [Abrir archivo excedente parte {file_count}]({link})")
+                st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} of the data was saved to your personal Google Drive: [Open excess file part {file_count}]({link})")
             except Exception as move_err:
-                st.warning(f"No se pudo subir el archivo parte {file_count} a tu Google Drive personal: {move_err}")
+                st.warning(f"Could not upload file part {file_count} to your personal Google Drive: {move_err}")
+                # Try to save locally as fallback
+                try:
+                    local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    df_chunk.to_excel(local_filename, index=False)
+                    st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
+                except Exception as local_err:
+                    st.error(f"Failed to save file part {file_count} locally: {local_err}")
             file_count += 1
         
         return True
     except Exception as e:
-        st.error(f"Error subiendo datos originales a Google Sheets: {str(e)}")
+        st.error(f"Error uploading original data to Google Sheets: {str(e)}")
         import traceback
         st.error(f"Full traceback: {traceback.format_exc()}")
         return False
@@ -752,13 +777,13 @@ def main():
     
     if uploaded_file is not None:
         with st.spinner("Processing data and updating databases..."):
-            # Validar el archivo
+            # Validate the file
             is_valid, message, df = validate_file(uploaded_file)
             if is_valid:
-                # Subir datos originales a Google Sheets externo
+                # Upload original data to external Google Sheets
                 success_raw = upload_raw_to_gsheet(df)
                 if not success_raw:
-                    st.error("No se pudo subir el archivo original a la hoja externa. Proceso detenido.")
+                    st.error("Could not upload original file to external sheet. Process stopped.")
                     return
                 # Store initial record count
                 initial_records = len(df)
