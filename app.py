@@ -15,6 +15,14 @@ import pickle
 from google.auth.transport.requests import Request
 from pathlib import Path
 
+# Force light theme and other configurations - MUST BE FIRST STREAMLIT CALL
+st.set_page_config(
+    page_title="Olgam Plasma Center - Data Processor",
+    page_icon="🩸",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
 # Check for OAuth code at startup
 params = st.query_params
 if 'code' in params and 'state' in params:
@@ -22,16 +30,11 @@ if 'code' in params and 'state' in params:
     st.session_state['oauth_state'] = params['state'][0]
     # Clear URL parameters
     st.query_params.clear()
+    
+    # Show success message and stop execution
     st.success("✅ Google Drive authorization successful!")
     st.info("You can now close this tab and return to your original Streamlit tab.")
-
-# Force light theme and other configurations
-st.set_page_config(
-    page_title="Olgam Plasma Center - Data Processor",
-    page_icon="🩸",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+    st.stop()
 
 # Custom CSS for better styling and force light theme
 st.markdown("""
@@ -196,17 +199,19 @@ def get_google_creds():
                     # Remove the code from session state to avoid reuse
                     del st.session_state['oauth_code']
                     st.success("✅ Successfully authenticated with Google Drive!")
+                    return creds
                 except Exception as e:
                     st.error(f"Authentication error: {str(e)}")
-                    st.info("Please try authorizing again.")
                     auth_url = get_google_auth_url()
-                    st.markdown(f'''
-                        <h3>🔐 Google Drive Authorization Required</h3>
-                        <p>To save excess files to your Google Drive, please authorize the application:</p>
-                        ''', unsafe_allow_html=True)
-                        
-                    # Use direct HTML link for better compatibility
-                    st.markdown(f'''
+                    
+                    st.markdown("""
+                    <h3>🔐 Google Drive Authorization Failed</h3>
+                    <p>Please try authorizing again by clicking the button below:</p>
+                    """, unsafe_allow_html=True)
+                    
+                    col1, col2 = st.columns([1, 2])
+                    with col1:
+                        st.markdown(f'''
                         <a href="{auth_url}" target="_blank" style="text-decoration: none;">
                             <button style="
                                 background-color: #4285f4;
@@ -220,30 +225,37 @@ def get_google_creds():
                                 display: inline-flex;
                                 align-items: center;
                                 margin: 10px 0;">
-                                <span style="margin-right: 8px;">🔑</span> Retry Google Drive Authorization
+                                <span style="margin-right: 8px;">🔑</span> Retry Authorization
                             </button>
                         </a>
                         ''', unsafe_allow_html=True)
                     
+                    with col2:
+                        st.markdown("""
+                        <ol style="margin-top: 10px;">
+                            <li>Click the button to open Google authorization</li>
+                            <li>Sign in with your Google account</li>
+                            <li>After authorizing, <strong>reload this page</strong></li>
+                        </ol>
+                        """, unsafe_allow_html=True)
+                    
                     # Provide direct URL for manual copy-paste
-                    st.code(auth_url, language=None)
-                    st.info("If the button doesn't work, copy and paste the URL above into your browser.")
+                    with st.expander("Authorization URL (if button doesn't work)"):
+                        st.code(auth_url, language=None)
+                        st.caption("Copy and paste this URL into your browser if the button doesn't work")
+                    
                     st.stop()
             else:
                 auth_url = get_google_auth_url()
-                st.markdown(f'''
-                    <h3>🔐 Google Drive Authorization Required</h3>
-                    <p>To save excess files to your Google Drive, please authorize the application:</p>
-                    <ol>
-                        <li>Click the button below to authorize</li>
-                        <li>Sign in with your Google account</li>
-                        <li>Grant the requested permissions</li>
-                        <li>After authorization, <strong>reload this page</strong> to continue</li>
-                    </ol>
-                    ''', unsafe_allow_html=True)
-                    
-                # Use direct HTML link for better compatibility
-                st.markdown(f'''
+                
+                st.markdown("""
+                <h3>🔐 Google Drive Authorization Required</h3>
+                <p>To save excess files to your Google Drive, we need your authorization:</p>
+                """, unsafe_allow_html=True)
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.markdown(f'''
                     <a href="{auth_url}" target="_blank" style="text-decoration: none;">
                         <button style="
                             background-color: #4285f4;
@@ -257,18 +269,25 @@ def get_google_creds():
                             display: inline-flex;
                             align-items: center;
                             margin: 10px 0;">
-                            <span style="margin-right: 8px;">🔑</span> Authorize Google Drive Access
+                            <span style="margin-right: 8px;">🔑</span> Authorize Access
                         </button>
                     </a>
                     ''', unsafe_allow_html=True)
                 
-                # Provide direct URL for manual copy-paste
-                st.code(auth_url, language=None)
-                st.info("If the button doesn't work, copy and paste the URL above into your browser.")
+                with col2:
+                    st.markdown("""
+                    <ol style="margin-top: 10px;">
+                        <li>Click the button to open Google authorization</li>
+                        <li>Sign in with your Google account</li>
+                        <li>After authorizing, <strong>reload this page</strong></li>
+                    </ol>
+                    """, unsafe_allow_html=True)
                 
-                st.markdown('''
-                    <p style="color: #666; margin-top: 20px;">Note: After authorization, you will be redirected to a new page. Please reload this page after authorization.</p>
-                    ''', unsafe_allow_html=True)
+                # Provide direct URL for manual copy-paste
+                with st.expander("Authorization URL (if button doesn't work)"):
+                    st.code(auth_url, language=None)
+                    st.caption("Copy and paste this URL into your browser if the button doesn't work")
+                
                 st.stop()
     
     return creds
