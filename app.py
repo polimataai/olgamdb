@@ -104,10 +104,9 @@ if 'code' in params and 'state' in params:
             Please try authorizing again from the main application.
             """)
             
-            # Add a button to retry authorization in a popup
-            auth_url = get_google_auth_url()
-            st.markdown(f'''
-            <a href="{auth_url}" target="_blank" style="text-decoration: none;">
+            # Add a button to return to main application
+            st.markdown('''
+            <a href="https://olgamdb.streamlit.app/" target="_self" style="text-decoration: none;">
                 <button style="
                     background-color: #4285f4;
                     color: white;
@@ -118,7 +117,7 @@ if 'code' in params and 'state' in params:
                     font-size: 16px;
                     font-weight: bold;
                     margin: 20px 0;">
-                    Try Again
+                    Return to Main Application
                 </button>
             </a>
             ''', unsafe_allow_html=True)
@@ -322,10 +321,10 @@ def get_google_creds():
             with col2:
                 st.markdown("""
                 <ol style="margin-top: 10px;">
-                    <li>Click the button to open Google authorization in a popup</li>
+                    <li>Click the button to open Google authorization</li>
                     <li>Sign in with your Google account</li>
-                    <li>After authorizing, close the popup window</li>
-                    <li>This page will automatically refresh to continue processing</li>
+                    <li>After authorizing, you'll be redirected to a confirmation page</li>
+                    <li>Return to this tab and refresh the page to continue</li>
                 </ol>
                 """, unsafe_allow_html=True)
             
@@ -333,6 +332,10 @@ def get_google_creds():
             with st.expander("Authorization URL (if button doesn't work)"):
                 st.code(auth_url, language=None)
                 st.caption("Copy and paste this URL into your browser if the button doesn't work")
+            
+            # Add a refresh button
+            if st.button("🔄 Refresh Page (after authorization)"):
+                st.rerun()
             
             # Add a debug button to check token path
             with st.expander("Debug Information"):
