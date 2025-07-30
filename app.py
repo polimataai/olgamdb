@@ -7,10 +7,13 @@ import json
 import os
 import tempfile
 import datetime
-import io
-from google.oauth2 import service_account
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import io
+import pickle
+from google.auth.transport.requests import Request
+from pathlib import Path
 
 # Force light theme and other configurations
 st.set_page_config(
@@ -120,6 +123,82 @@ def check_password():
         return False
     
     return st.session_state["password_correct"]
+
+def get_google_auth_url():
+    flow = InstalledAppFlow.from_client_config(
+        {
+            "web": {
+                "client_id": st.secrets["google_oauth"]["client_id"],
+                "project_id": st.secrets["google_oauth"]["project_id"],
+                "auth_uri": st.secrets["google_oauth"]["auth_uri"],
+                "token_uri": st.secrets["google_oauth"]["token_uri"],
+                "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                "client_secret": st.secrets["google_oauth"]["client_secret"],
+                "redirect_uris": ["https://olgam-db.streamlit.app/"]
+            }
+        },
+        scopes=['https://www.googleapis.com/auth/drive.file'],
+        redirect_uri="https://olgam-db.streamlit.app/"
+    )
+    auth_url, _ = flow.authorization_url(prompt='consent')
+    return auth_url
+
+def get_google_creds():
+    creds = None
+    
+    # Check if we have a token in session state
+    if 'google_token' in st.session_state:
+        creds = st.session_state['google_token']
+    
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # Get the authorization code from URL parameters
+            params = st.experimental_get_query_params()
+            if 'code' in params:
+                flow = InstalledAppFlow.from_client_config(
+                    {
+                        "web": {
+                            "client_id": st.secrets["google_oauth"]["client_id"],
+                            "project_id": st.secrets["google_oauth"]["project_id"],
+                            "auth_uri": st.secrets["google_oauth"]["auth_uri"],
+                            "token_uri": st.secrets["google_oauth"]["token_uri"],
+                            "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                            "client_secret": st.secrets["google_oauth"]["client_secret"],
+                            "redirect_uris": ["https://olgam-db.streamlit.app/"]
+                        }
+                    },
+                    scopes=['https://www.googleapis.com/auth/drive.file'],
+                    redirect_uri="https://olgam-db.streamlit.app/"
+                )
+                code = params['code'][0]
+                flow.fetch_token(code=code)
+                creds = flow.credentials
+                st.session_state['google_token'] = creds
+            else:
+                auth_url = get_google_auth_url()
+                st.markdown(f'''
+                    <h3>🔐 Google Drive Authorization Required</h3>
+                    <p>To save excess files to your Google Drive, please authorize the application:</p>
+                    <a href="{auth_url}" target="_blank">
+                        <button style="
+                            background-color: #4285f4;
+                            color: white;
+                            padding: 10px 20px;
+                            border: none;
+                            border-radius: 5px;
+                            cursor: pointer;
+                            font-size: 16px;
+                            margin: 10px 0;">
+                            🔑 Authorize Google Drive Access
+                        </button>
+                    </a>
+                    ''', unsafe_allow_html=True)
+                st.stop()
+    
+    return creds
 
 # Define the required columns
 REQUIRED_COLUMNS = [
@@ -571,77 +650,39 @@ def append_to_upload_process(new_donors, really_updated):
 
 
 def save_excel_to_drive_personal(df, filename, folder_id=None):
-    """Upload Excel file to Google Drive using service account credentials"""
+    # Get Google credentials
+    creds = get_google_creds()
+    service = build('drive', 'v3', credentials=creds)
+    
+    # Save the DataFrame as a temporary Excel file
+    temp_file = None
     try:
-        # Create service account credentials
-        credentials_dict = {
-            "type": "service_account",
-            "project_id": "third-hangout-387516",
-            "private_key_id": st.secrets["private_key_id"],
-            "private_key": st.secrets["google_credentials"],
-            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-            "client_id": "114223947184571105588",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-            "universe_domain": "googleapis.com"
-        }
-        
-        # Create credentials and build service
-        credentials = service_account.Credentials.from_service_account_info(
-            credentials_dict,
-            scopes=['https://www.googleapis.com/auth/drive.file']
-        )
-        service = build('drive', 'v3', credentials=credentials)
-        
-        # Save DataFrame to temporary Excel file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
             temp_file = tmp.name
             df.to_excel(temp_file, index=False)
-            tmp.flush()
-            
+        
+        file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+        media = MediaFileUpload(temp_file, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        file = service.files().create(body=file_metadata, media_body=media, fields='id,webViewLink').execute()
+        return file.get('webViewLink')
+    except Exception as e:
+        raise e
+    finally:
+        # Clean up temporary file with retry mechanism
+        if temp_file and os.path.exists(temp_file):
             try:
-                # Prepare file metadata
-                file_metadata = {
-                    'name': filename,
-                    'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                }
-                
-                # If folder_id is provided, add it to parents
-                if folder_id:
-                    file_metadata['parents'] = [folder_id]
-                
-                # Create media file upload object
-                media = MediaFileUpload(
-                    temp_file,
-                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                    resumable=True
-                )
-                
-                # Execute the upload
-                file = service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id, webViewLink',
-                    supportsAllDrives=True
-                ).execute()
-                
-                # Get the file's web view link
-                web_link = file.get('webViewLink')
-                
-                return web_link
-                
-            finally:
-                # Clean up temporary file
+                os.unlink(temp_file)
+            except OSError:
+                # If immediate deletion fails, try again after a short delay
+                import time
+                time.sleep(0.1)
                 try:
                     os.unlink(temp_file)
-                except Exception:
-                    pass  # Ignore cleanup errors
-                    
-    except Exception as e:
-        st.error(f"❌ Error uploading to Google Drive: {str(e)}")
-        raise e
+                except OSError:
+                    # If still fails, just log it but don't raise error
+                    st.warning(f"Could not delete temporary file: {temp_file}")
 
 def upload_raw_to_gsheet(df):
     """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to your personal Google Drive using OAuth, in parts of maximum 50,000 rows."""
@@ -759,9 +800,16 @@ def upload_raw_to_gsheet(df):
             new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
             try:
                 link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} was uploaded to Google Drive: [Open file part {file_count}]({link})")
+                st.info(f"⚠️ The original file exceeds Google Sheets cell limit. Part {file_count} of the data was saved to your personal Google Drive: [Open excess file part {file_count}]({link})")
             except Exception as move_err:
-                st.error(f"Could not upload file part {file_count} to Google Drive: {move_err}")
+                st.warning(f"Could not upload file part {file_count} to your personal Google Drive: {move_err}")
+                # Try to save locally as fallback
+                try:
+                    local_filename = f"Olgam_Data_Excess_Part_{file_count}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    df_chunk.to_excel(local_filename, index=False)
+                    st.info(f"📁 File part {file_count} saved locally as: {local_filename}")
+                except Exception as local_err:
+                    st.error(f"Failed to save file part {file_count} locally: {local_err}")
             file_count += 1
         
         return True
