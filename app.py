@@ -4,6 +4,13 @@ import re
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import os
+import tempfile
+import datetime
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+import io
 
 # Force light theme and other configurations
 st.set_page_config(
@@ -561,9 +568,50 @@ def append_to_upload_process(new_donors, really_updated):
         st.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
+def get_oauth_credentials_dict():
+    secrets = st.secrets["google_oauth"]
+    return {
+        "installed": {
+            "client_id": secrets["client_id"],
+            "project_id": secrets["project_id"],
+            "auth_uri": secrets["auth_uri"],
+            "token_uri": secrets["token_uri"],
+            "auth_provider_x509_cert_url": secrets["auth_provider_x509_cert_url"],
+            "client_secret": secrets["client_secret"],
+            "redirect_uris": list(secrets["redirect_uris"])
+        }
+    }
+
+def get_drive_service_oauth():
+    SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    creds = None
+    # En Streamlit Cloud no hay persistencia, así que siempre pedirá autorización
+    creds_dict = get_oauth_credentials_dict()
+    flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
+    creds = flow.run_local_server(port=0)
+    service = build('drive', 'v3', credentials=creds)
+    return service
+
+def save_excel_to_drive_personal(df, filename, folder_id=None):
+    service = get_drive_service_oauth()
+    # Guardar el DataFrame como archivo Excel temporal
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        df.to_excel(tmp.name, index=False)
+        tmp.flush()
+        file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+        media = MediaFileUpload(tmp.name, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        file = service.files().create(body=file_metadata, media_body=media, fields='id,webViewLink').execute()
+        os.unlink(tmp.name)
+    return file.get('webViewLink')
+
 def upload_raw_to_gsheet(df):
-    """Sube el DataFrame original validado a la hoja de Google Sheets especificada, agregando al final."""
+    """Sube el DataFrame original validado a la hoja de Google Sheets especificada, agregando al final. Si se excede el límite de celdas, los archivos excedentes se suben como Excel (.xlsx) a tu Google Drive personal usando OAuth, en partes de máximo 50,000 filas."""
     try:
+        import gspread
+        from gspread.exceptions import APIError
+        
         # --- NUEVO BLOQUE: Eliminar la 5ta columna si corresponde ---
         df_to_upload = df.copy()
         if df_to_upload.shape[1] >= 5:
@@ -585,6 +633,7 @@ def upload_raw_to_gsheet(df):
                 if date_count / len(df_to_upload) > 0.8:
                     df_to_upload = df_to_upload.drop(columns=[fifth_col])
         # --- FIN BLOQUE NUEVO ---
+        
         scope = ['https://spreadsheets.google.com/feeds',
                 'https://www.googleapis.com/auth/drive']
         credentials_dict = {
@@ -602,9 +651,9 @@ def upload_raw_to_gsheet(df):
         }
         credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
         gc = gspread.authorize(credentials)
-        # Abrir el Google Sheet por el nuevo ID proporcionado
         workbook = gc.open_by_key('1t2PAePYWTpDQbPTlafIhSUUdiF_CJKDnSUfMc63zoX0')
         worksheet = workbook.get_worksheet(0)  # Primera hoja
+        
         # Convertir columnas de tipo fecha/hora y time a string
         df_processed = df_to_upload.copy()
         for col in df_processed.columns:
@@ -613,21 +662,71 @@ def upload_raw_to_gsheet(df):
             elif pd.api.types.is_timedelta64_dtype(df_processed[col]):
                 df_processed[col] = df_processed[col].astype(str)
             elif pd.api.types.is_object_dtype(df_processed[col]):
-                # Convertir objetos de tipo time o date a string
                 if df_processed[col].apply(lambda x: hasattr(x, 'isoformat')).any():
                     df_processed[col] = df_processed[col].apply(lambda x: x.isoformat() if hasattr(x, 'isoformat') else str(x))
-        # Preparar los datos para subir
+        
         df_clean = df_processed.fillna('')
         data_to_upload = df_clean.values.tolist()
-        # Obtener la última fila con datos
-        last_row = len(worksheet.get_all_values())
-        # Agregar los datos al final
-        worksheet.append_rows(
-            data_to_upload,
-            value_input_option='RAW',
-            insert_data_option='INSERT_ROWS',
-            table_range=f'A{last_row + 1}'
-        )
+        n_rows_to_insert = len(data_to_upload)
+        n_cols = len(df_clean.columns)
+        current_rows = len(worksheet.get_all_values())
+        used_cells = current_rows * n_cols
+        max_cells = 10_000_000
+        available_cells = max_cells - used_cells
+        max_rows_to_insert = available_cells // n_cols
+        start_idx = 0
+        inserted_in_main = False
+        
+        if n_rows_to_insert <= max_rows_to_insert:
+            last_row = current_rows
+            try:
+                worksheet.append_rows(
+                    data_to_upload,
+                    value_input_option='RAW',
+                    insert_data_option='INSERT_ROWS',
+                    table_range=f'A{last_row + 1}'
+                )
+                inserted_in_main = True
+            except APIError as api_err:
+                st.warning("No se pudo insertar en la hoja principal por límite de celdas. El resto se guardará en archivos nuevos.")
+                start_idx = 0
+        else:
+            if max_rows_to_insert > 0:
+                data_fit = data_to_upload[:max_rows_to_insert]
+                last_row = current_rows
+                try:
+                    worksheet.append_rows(
+                        data_fit,
+                        value_input_option='RAW',
+                        insert_data_option='INSERT_ROWS',
+                        table_range=f'A{last_row + 1}'
+                    )
+                    start_idx = max_rows_to_insert
+                    inserted_in_main = True
+                except APIError as api_err:
+                    st.warning("No se pudo insertar en la hoja principal por límite de celdas. El resto se guardará en archivos nuevos.")
+                    start_idx = 0
+            else:
+                start_idx = 0
+        
+        # Ahora, crear archivos Excel de máximo 50,000 filas y subirlos a tu Drive personal
+        file_count = 1
+        data_rest = data_to_upload[start_idx:] if not inserted_in_main else data_to_upload[start_idx:]
+        folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'
+        max_excel_rows = 50000
+        
+        while data_rest:
+            data_chunk = data_rest[:max_excel_rows]
+            data_rest = data_rest[max_excel_rows:]
+            df_chunk = pd.DataFrame(data_chunk, columns=df_clean.columns)
+            new_title = f"Datos_Olgam_Excedente_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_parte{file_count}.xlsx"
+            try:
+                link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
+                st.info(f"⚠️ El archivo original excede el límite de celdas de Google Sheets. Parte {file_count} de los datos se guardó en tu Google Drive personal: [Abrir archivo excedente parte {file_count}]({link})")
+            except Exception as move_err:
+                st.warning(f"No se pudo subir el archivo parte {file_count} a tu Google Drive personal: {move_err}")
+            file_count += 1
+        
         return True
     except Exception as e:
         st.error(f"Error subiendo datos originales a Google Sheets: {str(e)}")
