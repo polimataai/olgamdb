@@ -63,6 +63,10 @@ if 'code' in params and 'state' in params:
         with open(TOKEN_PATH, 'wb') as token:
             pickle.dump(creds, token)
         
+        # Print debug information
+        print(f"Token saved successfully to: {TOKEN_PATH}")
+        print(f"Token file exists after save: {os.path.exists(TOKEN_PATH)}")
+        
         # Show success message
         st.success("✅ Google Drive authorization successful!")
         st.info("The authorization has been saved. You can now close this tab and continue with your file processing.")
@@ -100,23 +104,49 @@ if 'code' in params and 'state' in params:
             Please try authorizing again from the main application.
             """)
             
-            # Add a direct link back to the main app
-            st.markdown(f'''
-                <a href="https://olgamdb.streamlit.app/" target="_self" style="text-decoration: none;">
-                    <button style="
-                        background-color: #4285f4;
-                        color: white;
-                        padding: 12px 24px;
-                        border: none;
-                        border-radius: 5px;
-                        cursor: pointer;
-                        font-size: 16px;
-                        font-weight: bold;
-                        margin: 20px 0;">
-                        Return to Main Application
-                    </button>
-                </a>
-                ''', unsafe_allow_html=True)
+                         # Add a button to retry authorization in a popup
+             st.markdown(f'''
+                 <button onclick="retryOAuthPopup()" style="
+                     background-color: #4285f4;
+                     color: white;
+                     padding: 12px 24px;
+                     border: none;
+                     border-radius: 5px;
+                     cursor: pointer;
+                     font-size: 16px;
+                     font-weight: bold;
+                     margin: 20px 0;">
+                     Try Again in Popup
+                 </button>
+                 
+                 <script>
+                 function retryOAuthPopup() {{
+                     // Open popup window centered on screen
+                     const width = 600;
+                     const height = 700;
+                     const left = (screen.width/2)-(width/2);
+                     const top = (screen.height/2)-(height/2);
+                     
+                     const popup = window.open(
+                         "{get_google_auth_url()}", 
+                         "GoogleOAuth", 
+                         `width=${{width}},height=${{height}},left=${{left}},top=${{top}},toolbar=0,scrollbars=1,status=1,resizable=1,location=1`
+                     );
+                     
+                     // Reload the parent page after popup is closed or after 5 seconds
+                     const checkInterval = setInterval(function() {{
+                         if (popup.closed) {{
+                             window.location.reload();
+                             clearInterval(checkInterval);
+                         }}
+                     }}, 1000);
+                     
+                     setTimeout(function() {{
+                         window.location.reload();
+                     }}, 10000);
+                 }}
+                 </script>
+                 ''', unsafe_allow_html=True)
         st.stop()
 
 # Custom CSS for better styling and force light theme
@@ -294,32 +324,56 @@ def get_google_creds():
             
             col1, col2 = st.columns([1, 2])
             with col1:
+                # Using JavaScript to open a popup window
                 st.markdown(f'''
-                <a href="{auth_url}" target="_blank" style="text-decoration: none;">
-                    <button style="
-                        background-color: #4285f4;
-                        color: white;
-                        padding: 12px 24px;
-                        border: none;
-                        border-radius: 5px;
-                        cursor: pointer;
-                        font-size: 16px;
-                        font-weight: bold;
-                        display: inline-flex;
-                        align-items: center;
-                        margin: 10px 0;">
-                        <span style="margin-right: 8px;">🔑</span> Authorize Access
-                    </button>
-                </a>
+                <button onclick="openOAuthPopup()" style="
+                    background-color: #4285f4;
+                    color: white;
+                    padding: 12px 24px;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 16px;
+                    font-weight: bold;
+                    display: inline-flex;
+                    align-items: center;
+                    margin: 10px 0;">
+                    <span style="margin-right: 8px;">🔑</span> Authorize Access
+                </button>
+
+                <script>
+                function openOAuthPopup() {
+                    // Open popup window centered on screen
+                    const width = 600;
+                    const height = 700;
+                    const left = (screen.width/2)-(width/2);
+                    const top = (screen.height/2)-(height/2);
+                    
+                    window.open(
+                        "{auth_url}", 
+                        "GoogleOAuth", 
+                        `width=${width},height=${height},left=${left},top=${top},toolbar=0,scrollbars=1,status=1,resizable=1,location=1`
+                    );
+                    
+                    // Set a timer to check for token periodically
+                    const checkInterval = setInterval(function() {{
+                        // Reload the parent page after 5 seconds to check for token
+                        setTimeout(function() {{
+                            window.location.reload();
+                        }}, 5000);
+                        clearInterval(checkInterval);
+                    }}, 1000);
+                }
+                </script>
                 ''', unsafe_allow_html=True)
             
             with col2:
                 st.markdown("""
                 <ol style="margin-top: 10px;">
-                    <li>Click the button to open Google authorization</li>
+                    <li>Click the button to open Google authorization in a popup</li>
                     <li>Sign in with your Google account</li>
-                    <li>After authorizing, you'll be redirected to a confirmation page</li>
-                    <li>Then return to this tab to continue processing</li>
+                    <li>After authorizing, close the popup window</li>
+                    <li>This page will automatically refresh to continue processing</li>
                 </ol>
                 """, unsafe_allow_html=True)
             
