@@ -7,13 +7,7 @@ import json
 import os
 import tempfile
 import datetime
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 import io
-import pickle
-from google.auth.transport.requests import Request
-from pathlib import Path
 
 # Force light theme and other configurations - MUST BE FIRST STREAMLIT CALL
 st.set_page_config(
@@ -22,116 +16,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-
-# Define a token file path - this will persist between sessions
-# Use a path in the Streamlit cache directory which is writable
-import tempfile
-TOKEN_DIR = tempfile.gettempdir()
-TOKEN_PATH = os.path.join(TOKEN_DIR, "olgamdb_token.pickle")
-
-# Initialize session state for OAuth flow
-if 'oauth_state' not in st.session_state:
-    st.session_state.oauth_state = None
-
-# Check for OAuth code at startup
-params = st.query_params
-if 'code' in params and 'state' in params:
-    # We're in the OAuth callback page
-    try:
-        # Get the code
-        code = params['code'][0]
-        state = params['state'][0]
-        
-        # Clear URL parameters to prevent reuse
-        st.query_params.clear()
-        
-        # Create the flow with the same parameters as the original request
-        flow = InstalledAppFlow.from_client_config(
-            {
-                "web": {
-                    "client_id": st.secrets["google_oauth"]["client_id"],
-                    "project_id": st.secrets["google_oauth"]["project_id"],
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "client_secret": st.secrets["google_oauth"]["client_secret"],
-                    "redirect_uris": ["https://olgamdb.streamlit.app/"]
-                }
-            },
-            scopes=['https://www.googleapis.com/auth/drive.file'],
-            redirect_uri="https://olgamdb.streamlit.app/"
-        )
-        
-        # Exchange the authorization code for a token
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        
-        # Save the credentials to a file
-        with open(TOKEN_PATH, 'wb') as token:
-            pickle.dump(creds, token)
-        
-        # Print debug information
-        print(f"Token saved successfully to: {TOKEN_PATH}")
-        print(f"Token file exists after save: {os.path.exists(TOKEN_PATH)}")
-        
-        # Set session state to indicate successful authorization
-        st.session_state.oauth_state = "success"
-        
-        # Show success message and auto-refresh
-        st.success("✅ Google Drive authorization successful!")
-        st.info("The page will automatically reload in 3 seconds...")
-        
-        # Add JavaScript to auto-refresh the page
-        st.markdown("""
-        <script>
-            setTimeout(function() {
-                window.location.href = 'https://olgamdb.streamlit.app/';
-            }, 3000);
-        </script>
-        """, unsafe_allow_html=True)
-        
-        st.stop()
-    except Exception as e:
-        error_msg = str(e)
-        st.error(f"Error processing authorization: {error_msg}")
-        
-        # Set session state to indicate failed authorization
-        st.session_state.oauth_state = "error"
-        
-        # Provide more helpful information for specific errors
-        if "invalid_grant" in error_msg:
-            st.warning("""
-            This error typically occurs when:
-            1. The authorization code has already been used
-            2. The code has expired
-            3. The redirect URL doesn't match exactly
-            
-            Please try authorizing again from the main application.
-            """)
-            
-            # Add a button to return to main application with JavaScript auto-click
-            st.markdown('''
-            <a href="https://olgamdb.streamlit.app/" id="return-btn" style="text-decoration: none;">
-                <button style="
-                    background-color: #4285f4;
-                    color: white;
-                    padding: 12px 24px;
-                    border: none;
-                    border-radius: 5px;
-                    cursor: pointer;
-                    font-size: 16px;
-                    font-weight: bold;
-                    margin: 20px 0;">
-                    Return to Main Application
-                </button>
-            </a>
-            <script>
-                setTimeout(function() {
-                    document.getElementById('return-btn').click();
-                }, 3000);
-            </script>
-            ''', unsafe_allow_html=True)
-        st.stop()
 
 # Custom CSS for better styling and force light theme
 st.markdown("""
@@ -201,177 +85,86 @@ st.markdown("""
             background-color: #f8f9fa;
             color: #2c3e50;
         }
+        
+        /* Style code blocks */
+        .stCodeBlock {
+            background-color: #f8f9fa;
+            border-radius: 0.5rem;
+        }
+        
+        /* Style download buttons */
+        .stDownloadButton {
+            background-color: #28a745;
+            color: #ffffff;
+            border-radius: 0.5rem;
+        }
+        
+        /* Style success messages */
+        .stSuccess {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+        }
+        
+        /* Style error messages */
+        .stError {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+        }
+        
+        /* Style warning messages */
+        .stWarning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+            border-radius: 0.5rem;
+            padding: 1rem;
+        }
+        
+        /* Style info messages */
+        .stInfo {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            border-radius: 0.5rem;
+            padding: 1rem;
+        }
     </style>
 """, unsafe_allow_html=True)
 
 # Password protection
 def check_password():
     """Returns `True` if the user had the correct password."""
+
     def password_entered():
         """Checks whether a password entered by the user is correct."""
         if st.session_state["password"] == st.secrets["password"]:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store password
+            del st.session_state["password"]  # Don't store password.
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # First run, show input for password
-        st.markdown("""
-            <div style='text-align: center; padding: 1rem;'>
-                <h1 style='color: #2c3e50;'>🩸 Olgam Plasma Center</h1>
-                <h2 style='color: #7f8c8d;'>Database Processor</h2>
-            </div>
-        """, unsafe_allow_html=True)
-        
+        # First run, show input for password.
         st.text_input(
-            "Please enter the password to access the application",
-            type="password",
-            on_change=password_entered,
-            key="password"
+            "Password", type="password", on_change=password_entered, key="password"
         )
         return False
-    
-    return st.session_state["password_correct"]
-
-def get_google_auth_url():
-    flow = InstalledAppFlow.from_client_config(
-        {
-            "web": {
-                "client_id": st.secrets["google_oauth"]["client_id"],
-                "project_id": st.secrets["google_oauth"]["project_id"],
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "client_secret": st.secrets["google_oauth"]["client_secret"],
-                "redirect_uris": ["https://olgamdb.streamlit.app/"]
-            }
-        },
-        scopes=['https://www.googleapis.com/auth/drive.file'],
-        redirect_uri="https://olgamdb.streamlit.app/"
-    )
-    
-    # Use the session state parameter if available
-    state_param = st.session_state.get('oauth_state_param', None)
-    
-    auth_url, _ = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent',
-        state=state_param
-    )
-    # Print the URL for debugging
-    print(f"Authorization URL: {auth_url}")
-    return auth_url
-
-def get_google_creds():
-    creds = None
-    
-    # Check if we have a token file
-    if os.path.exists(TOKEN_PATH):
-        try:
-            with open(TOKEN_PATH, 'rb') as token:
-                try:
-                    creds = pickle.load(token)
-                    st.success("✅ Google Drive authorization found!")
-                except Exception as e:
-                    st.error(f"Error loading credentials: {str(e)}")
-                    # Remove corrupted token file
-                    os.remove(TOKEN_PATH)
-        except Exception as e:
-            st.error(f"Error accessing token file: {str(e)}")
-    
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                # Save the refreshed credentials
-                try:
-                    with open(TOKEN_PATH, 'wb') as token:
-                        pickle.dump(creds, token)
-                    st.success("✅ Refreshed Google Drive authorization!")
-                except Exception as save_error:
-                    st.error(f"Error saving refreshed credentials: {str(save_error)}")
-            except Exception as e:
-                # If refresh fails, we need to get new credentials
-                st.warning("Your authorization has expired. Please authorize again.")
-                try:
-                    if os.path.exists(TOKEN_PATH):
-                        os.remove(TOKEN_PATH)
-                except Exception:
-                    pass
-                creds = None
-        
-        if not creds:
-            # Generate a unique state parameter for this session
-            if 'oauth_state_param' not in st.session_state:
-                import uuid
-                st.session_state.oauth_state_param = str(uuid.uuid4())[:8]
-            
-            auth_url = get_google_auth_url()
-            
-            st.markdown("""
-            <h3>🔐 Google Drive Authorization Required</h3>
-            <p>To save excess files to your Google Drive, we need your authorization:</p>
-            """, unsafe_allow_html=True)
-            
-            # Use a direct approach with a single button
-            st.markdown(f'''
-            <div style="text-align: center; margin: 20px 0;">
-                <a href="{auth_url}" target="_self" style="text-decoration: none;">
-                    <button style="
-                        background-color: #4285f4;
-                        color: white;
-                        padding: 15px 30px;
-                        border: none;
-                        border-radius: 5px;
-                        cursor: pointer;
-                        font-size: 18px;
-                        font-weight: bold;
-                        display: inline-flex;
-                        align-items: center;">
-                        <span style="margin-right: 10px;">🔑</span> Authorize Google Drive Access
-                    </button>
-                </a>
-            </div>
-            
-            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <p style="font-weight: bold; margin-bottom: 10px;">Instructions:</p>
-                <ol>
-                    <li>Click the button above to start Google authorization</li>
-                    <li>Sign in with your Google account when prompted</li>
-                    <li>Grant the requested permissions</li>
-                    <li>You'll be automatically redirected back to the application</li>
-                </ol>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            # Provide direct URL for manual copy-paste
-            with st.expander("Authorization URL (if button doesn't work)"):
-                st.code(auth_url, language=None)
-                st.caption("Copy and paste this URL into your browser if the button doesn't work")
-            
-            # Add a debug button to check token path
-            with st.expander("Debug Information"):
-                st.write(f"Token path: {TOKEN_PATH}")
-                st.write(f"Token exists: {os.path.exists(TOKEN_PATH)}")
-                st.write(f"Token directory writable: {os.access(TOKEN_DIR, os.W_OK)}")
-                st.write(f"Session state: {st.session_state.get('oauth_state', 'Not set')}")
-                
-                if st.button("Delete Token File (if exists)"):
-                    try:
-                        if os.path.exists(TOKEN_PATH):
-                            os.remove(TOKEN_PATH)
-                            st.success("Token file deleted successfully!")
-                        else:
-                            st.info("No token file exists to delete.")
-                    except Exception as del_error:
-                        st.error(f"Error deleting token file: {str(del_error)}")
-            
-            st.stop()
-    
-    return creds
+    elif not st.session_state["password_correct"]:
+        # Password not correct, show input + error.
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("😕 User not known or password incorrect")
+        return False
+    else:
+        # Password correct.
+        return True
 
 # Define the required columns
 REQUIRED_COLUMNS = [
@@ -822,121 +615,196 @@ def append_to_upload_process(new_donors, really_updated):
 
 
 
-def save_excel_to_drive_personal(df, filename, folder_id=None):
-    """Upload Excel file to Google Drive using service account credentials.
-    This uses a shared folder to avoid quota issues with service accounts."""
+def save_data_to_supabase(df, batch_name):
+    """Save excess data to Supabase database.
+    This function inserts the data into the olgam_donor_data table in smaller batches to avoid timeouts."""
     try:
-        # Use service account credentials instead of OAuth
-        scope = ['https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive']
+        from supabase import create_client, Client
         
-        credentials_dict = {
-            "type": "service_account",
-            "project_id": "third-hangout-387516",
-            "private_key_id": st.secrets["private_key_id"],
-            "private_key": st.secrets["google_credentials"],
-            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-            "client_id": "114223947184571105588",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-            "universe_domain": "googleapis.com"
-        }
+        # Initialize Supabase client
+        supabase: Client = create_client(
+            st.secrets["supabase"]["url"],
+            st.secrets["supabase"]["key"]
+        )
         
-        # Use the dictionary directly with from_json_keyfile_dict
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        # Clean and prepare the data for insertion
+        df_clean = df.copy()
         
-        # Build the Drive service
-        drive_service = build('drive', 'v3', credentials=credentials)
+        # Handle date columns - convert empty strings to None
+        date_columns = ['Donation Date', 'Last 	Donation Date']
+        for col in date_columns:
+            if col in df_clean.columns:
+                # Replace empty strings and invalid values with None
+                df_clean[col] = df_clean[col].astype(str)
+                df_clean[col] = df_clean[col].replace(['', 'nan', 'None', 'NaT', 'NULL'], None)
+                # Convert valid dates to proper format
+                df_clean[col] = pd.to_datetime(df_clean[col], errors='coerce')
+                df_clean[col] = df_clean[col].dt.strftime('%Y-%m-%d')
+                df_clean[col] = df_clean[col].replace('NaT', None)
         
-        # Create a temporary file
-        temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-        temp_file_path = temp_file.name
-        temp_file.close()  # Close the file so Excel can open it
+        # Handle integer columns - convert decimals to integers
+        integer_columns = ['Donor #', 'Yield (ml)', 'Age', 'Pure Plasma', 'Target Volume']
+        for col in integer_columns:
+            if col in df_clean.columns:
+                # Convert to string first to handle .0 endings
+                df_clean[col] = df_clean[col].astype(str)
+                # Remove .0 from strings like "800.0"
+                df_clean[col] = df_clean[col].str.replace('.0', '', regex=False)
+                # Convert to numeric, then to integer
+                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+                # Round to nearest integer and convert to Int64
+                df_clean[col] = df_clean[col].round().astype('Int64')
         
-        try:
-            # Save DataFrame to Excel
-            with pd.ExcelWriter(temp_file_path, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            
-            # Define file metadata
-            file_metadata = {
-                'name': filename,
-                'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            }
-            
-            # Always use the shared folder ID to avoid quota issues
-            # This is a folder that has been shared with the service account
-            shared_folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'  # Use the folder ID provided in your code
-            file_metadata['parents'] = [shared_folder_id]
-            
-            # Create media
-            media = MediaFileUpload(
-                temp_file_path,
-                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                resumable=True
-            )
-            
-            # Upload file
-            file = drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id,webViewLink'
-            ).execute()
-            
-            st.success(f"✅ File uploaded to Google Drive: {filename}")
-            return file.get('webViewLink')
+        # Handle numeric columns with decimals
+        numeric_columns = ['Visit mins. (Adjusted)']
+        for col in numeric_columns:
+            if col in df_clean.columns:
+                df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
         
-        except Exception as e:
-            st.error(f"Could not upload file {filename} to Google Drive: {str(e)}")
+        # Convert DataFrame to list of dictionaries
+        data_to_insert = df_clean.to_dict('records')
+        
+        # Clean the data further - convert any remaining string numbers to proper types
+        cleaned_records = []
+        all_keys = set()  # Track all possible keys
+        
+        for record in data_to_insert:
+            # Handle integer fields
+            for field in integer_columns:
+                if field in record and record[field] is not None:
+                    try:
+                        if isinstance(record[field], str):
+                            # Remove .0 from strings like "800.0"
+                            if record[field].endswith('.0'):
+                                record[field] = int(float(record[field]))
+                            else:
+                                record[field] = int(record[field])
+                        elif isinstance(record[field], float):
+                            record[field] = int(record[field])
+                    except (ValueError, TypeError):
+                        record[field] = None
             
-            # Try to save locally as fallback
+            # Handle date fields
+            for field in date_columns:
+                if field in record and record[field] is not None:
+                    if isinstance(record[field], str) and record[field].strip() == '':
+                        record[field] = None
+            
+            # Handle numeric fields
+            for field in numeric_columns:
+                if field in record and record[field] is not None:
+                    try:
+                        if isinstance(record[field], str):
+                            record[field] = float(record[field])
+                    except (ValueError, TypeError):
+                        record[field] = None
+            
+            # Remove None values and convert to proper JSON format
+            cleaned_record = {}
+            for key, value in record.items():
+                if value is not None and value != '' and str(value).lower() not in ['nan', 'nat', 'null']:
+                    cleaned_record[key] = value
+                    all_keys.add(key)
+            
+            # Only add record if it has at least some data
+            if cleaned_record:
+                cleaned_records.append(cleaned_record)
+        
+        # Ensure all records have the same keys
+        all_keys = list(all_keys)
+        standardized_records = []
+        
+        for record in cleaned_records:
+            standardized_record = {}
+            for key in all_keys:
+                if key in record:
+                    standardized_record[key] = record[key]
+                else:
+                    standardized_record[key] = None
+            standardized_records.append(standardized_record)
+        
+        # Insert data in smaller batches to avoid timeouts
+        batch_size = 1000  # Insert 1000 records at a time
+        total_records = len(standardized_records)
+        inserted_records = 0
+        
+        st.info(f"📊 Inserting {total_records} records in batches of {batch_size}...")
+        
+        for i in range(0, total_records, batch_size):
+            batch = standardized_records[i:i + batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (total_records + batch_size - 1) // batch_size
+            
             try:
-                local_path = f"{filename}"
-                df.to_excel(local_path, index=False)
-                st.info(f"File saved locally as {local_path} instead.")
-            except Exception as local_e:
-                st.error(f"Could not save file locally either: {str(local_e)}")
-            
-            return None
-        
-        finally:
-            # Clean up the temporary file with retry
-            max_retries = 3
-            for i in range(max_retries):
+                # Insert batch into Supabase
+                result = supabase.table('olgam_donor_data').insert(batch).execute()
+                inserted_records += len(batch)
+                
+                st.success(f"✅ Batch {batch_num}/{total_batches} inserted successfully ({len(batch)} records)")
+                
+            except Exception as batch_error:
+                st.error(f"❌ Error inserting batch {batch_num}: {str(batch_error)}")
+                
+                # Try to save this batch locally as fallback
                 try:
-                    if os.path.exists(temp_file_path):
-                        os.unlink(temp_file_path)
-                    break
-                except Exception as e:
-                    if i < max_retries - 1:
-                        # Wait a bit before retrying
-                        import time
-                        time.sleep(1)
-                    else:
-                        st.warning(f"Could not delete temporary file: {str(e)}")
-    
-    except Exception as auth_e:
-        error_msg = str(auth_e)
-        st.error(f"Authentication error: {error_msg}")
+                    df_batch = pd.DataFrame(batch)
+                    local_filename = f"olgam_data_batch_{batch_num}_{batch_name}.xlsx"
+                    df_batch.to_excel(local_filename, index=False)
+                    st.info(f"Batch {batch_num} saved locally as {local_filename}")
+                    
+                    # Create a download button for this batch
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        df_batch.to_excel(writer, index=False)
+                    
+                    st.download_button(
+                        label=f"⬇️ Download Batch {batch_num}",
+                        data=buffer.getvalue(),
+                        file_name=local_filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                except Exception as local_e:
+                    st.error(f"Could not save batch {batch_num} locally: {str(local_e)}")
+        
+        if inserted_records == total_records:
+            st.success(f"✅ All {total_records} records successfully uploaded to Supabase database")
+            st.info(f"📊 Data uploaded to olgam_donor_data table")
+            return True
+        else:
+            st.warning(f"⚠️ Only {inserted_records}/{total_records} records were uploaded successfully")
+            return False
+        
+    except Exception as e:
+        st.error(f"Could not save batch '{batch_name}' to Supabase: {str(e)}")
         
         # Try to save locally as fallback
         try:
-            local_path = f"{filename}"
-            df.to_excel(local_path, index=False)
-            st.info(f"File saved locally as {local_path} instead.")
-            return local_path
+            local_filename = f"olgam_data_excess_{batch_name}.xlsx"
+            df.to_excel(local_filename, index=False)
+            st.info(f"File saved locally as {local_filename} instead.")
+            
+            # Create a download button
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            
+            st.download_button(
+                label=f"⬇️ Download {batch_name} as Excel",
+                data=buffer.getvalue(),
+                file_name=local_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
         except Exception as local_e:
             st.error(f"Could not save file locally either: {str(local_e)}")
-            return None
-
-def upload_raw_to_gsheet(df):
-    """Uploads the validated original DataFrame to the specified Google Sheets worksheet, adding to the end. If the cell limit is exceeded, excess files are uploaded as Excel (.xlsx) to Google Drive using service account, in parts of maximum 50,000 rows."""
-    try:
-        import gspread
-        from gspread.exceptions import APIError
         
+        return False
+
+def upload_raw_to_supabase(df):
+    """Uploads the validated original DataFrame directly to Supabase.
+    This function uploads all data to the olgam_donor_data table without checking Google Sheets limits."""
+    try:
         # --- NUEVO BLOQUE: Eliminar la 5ta columna si corresponde ---
         df_to_upload = df.copy()
         if df_to_upload.shape[1] >= 5:
@@ -959,26 +827,6 @@ def upload_raw_to_gsheet(df):
                     df_to_upload = df_to_upload.drop(columns=[fifth_col])
         # --- FIN BLOQUE NUEVO ---
         
-        scope = ['https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive']
-        credentials_dict = {
-            "type": "service_account",
-            "project_id": "third-hangout-387516",
-            "private_key_id": st.secrets["private_key_id"],
-            "private_key": st.secrets["google_credentials"],
-            "client_email": "apollo-miner@third-hangout-387516.iam.gserviceaccount.com",
-            "client_id": "114223947184571105588",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/v1/certs",
-            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/apollo-miner%40third-hangout-387516.iam.gserviceaccount.com",
-            "universe_domain": "googleapis.com"
-        }
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-        gc = gspread.authorize(credentials)
-        workbook = gc.open_by_key('1t2PAePYWTpDQbPTlafIhSUUdiF_CJKDnSUfMc63zoX0')
-        worksheet = workbook.get_worksheet(0)  # Primera hoja
-        
         # Convertir columnas de tipo fecha/hora y time a string
         df_processed = df_to_upload.copy()
         for col in df_processed.columns:
@@ -991,89 +839,53 @@ def upload_raw_to_gsheet(df):
                     df_processed[col] = df_processed[col].apply(lambda x: x.isoformat() if hasattr(x, 'isoformat') else str(x))
         
         df_clean = df_processed.fillna('')
-        data_to_upload = df_clean.values.tolist()
-        n_rows_to_insert = len(data_to_upload)
-        n_cols = len(df_clean.columns)
-        current_rows = len(worksheet.get_all_values())
-        used_cells = current_rows * n_cols
-        max_cells = 10_000_000
-        available_cells = max_cells - used_cells
-        max_rows_to_insert = available_cells // n_cols
-        start_idx = 0
-        inserted_in_main = False
         
-        if n_rows_to_insert <= max_rows_to_insert:
-            last_row = current_rows
-            try:
-                worksheet.append_rows(
-                    data_to_upload,
-                    value_input_option='RAW',
-                    insert_data_option='INSERT_ROWS',
-                    table_range=f'A{last_row + 1}'
-                )
-                inserted_in_main = True
-            except APIError as api_err:
-                st.warning("Could not insert into main sheet due to cell limit. The rest will be saved in new files.")
-                start_idx = 0
-        else:
-            if max_rows_to_insert > 0:
-                data_fit = data_to_upload[:max_rows_to_insert]
-                last_row = current_rows
-                try:
-                    worksheet.append_rows(
-                        data_fit,
-                        value_input_option='RAW',
-                        insert_data_option='INSERT_ROWS',
-                        table_range=f'A{last_row + 1}'
-                    )
-                    start_idx = max_rows_to_insert
-                    inserted_in_main = True
-                except APIError as api_err:
-                    st.warning("Could not insert into main sheet due to cell limit. The rest will be saved in new files.")
-                    start_idx = 0
+        # Upload all data directly to Supabase
+        batch_name = f"raw_data_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        try:
+            success = save_data_to_supabase(df_clean, batch_name)
+            if success:
+                st.success(f"✅ All {len(df_clean)} records uploaded to Supabase successfully")
+                st.info(f"📊 Data uploaded to olgam_donor_data table")
+                return True
             else:
-                start_idx = 0
-        
-        # Now, create Excel files with maximum 50,000 rows and upload them to Google Drive
-        file_count = 1
-        data_rest = data_to_upload[start_idx:] if not inserted_in_main else data_to_upload[start_idx:]
-        folder_id = '1x5UQxQ1tIf6Blzvin9PGldrMIPl6Qyee'  # Shared folder ID
-        max_excel_rows = 50000
-        
-        while data_rest:
-            data_chunk = data_rest[:max_excel_rows]
-            data_rest = data_rest[max_excel_rows:]
-            df_chunk = pd.DataFrame(data_chunk, columns=df_clean.columns)
-            new_title = f"Olgam_Data_Excess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_part{file_count}.xlsx"
-            try:
-                link = save_excel_to_drive_personal(df_chunk, new_title, folder_id=folder_id)
-                st.success(f"✅ Part {file_count} of the data was saved to Google Drive")
-                st.markdown(f"[Open file in Google Drive]({link})", unsafe_allow_html=True)
-            except Exception as move_err:
-                st.warning(f"Could not upload file part {file_count} to Google Drive: {str(move_err)}")
-                # Create a download button as a last resort
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    df_chunk.to_excel(writer, index=False)
+                st.warning(f"⚠️ Some records could not be uploaded to Supabase, but continuing with processing...")
+                st.info(f"📊 The application will continue with the rest of the processes using the original data")
+                return True  # Continue with processing even if not all records were uploaded
                 
-                st.download_button(
-                    label=f"⬇️ Download Part {file_count} as Excel",
-                    data=buffer.getvalue(),
-                    file_name=f"Olgam_Data_Excess_Part_{file_count}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            file_count += 1
+        except Exception as e:
+            st.error(f"Error uploading data to Supabase: {str(e)}")
+            st.warning(f"⚠️ Could not upload to Supabase, but continuing with processing...")
+            st.info(f"📊 The application will continue with the rest of the processes using the original data")
+            return True  # Continue with processing even if Supabase upload failed
         
-        return True
     except Exception as e:
-        st.error(f"Error uploading original data to Google Sheets: {str(e)}")
-        import traceback
-        st.error(f"Full traceback: {traceback.format_exc()}")
-        return False
+        st.error(f"Error processing and uploading data to Supabase: {str(e)}")
+        st.warning(f"⚠️ Could not process data for Supabase, but continuing with processing...")
+        st.info(f"📊 The application will continue with the rest of the processes using the original data")
+        return True  # Continue with processing even if there was an error
 
 def main():
     if not check_password():
         st.error("⚠️ Password incorrect. Please try again.")
+        return
+
+    # Check if Supabase credentials are configured
+    if (st.secrets["supabase"]["url"] == "YOUR_SUPABASE_URL" or 
+        st.secrets["supabase"]["key"] == "YOUR_SUPABASE_ANON_KEY"):
+        st.error("⚠️ Supabase credentials not configured!")
+        st.info("""
+        Please update your `.streamlit/secrets.toml` file with your Supabase credentials:
+        
+        ```toml
+        [supabase]
+        url = "https://your-project.supabase.co"
+        key = "your-anon-key"
+        ```
+        
+        You can find these credentials in your Supabase project dashboard.
+        """)
         return
 
     # Header with logo and title
@@ -1093,10 +905,11 @@ def main():
             is_valid, message, df = validate_file(uploaded_file)
             if is_valid:
                 # Upload original data to external Google Sheets
-                success_raw = upload_raw_to_gsheet(df)
+                success_raw = upload_raw_to_supabase(df)
                 if not success_raw:
-                    st.error("Could not upload original file to external sheet. Process stopped.")
-                    return
+                    st.warning("⚠️ Supabase upload had issues, but continuing with processing...")
+                    st.info("📊 The application will continue with the rest of the processes")
+                
                 # Store initial record count
                 initial_records = len(df)
                 
