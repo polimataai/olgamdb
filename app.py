@@ -805,8 +805,30 @@ def upload_raw_to_supabase(df):
     """Uploads the validated original DataFrame directly to Supabase.
     This function uploads all data to the olgam_donor_data table without checking Google Sheets limits."""
     try:
+        # Define expected columns based on Supabase schema
+        expected_columns = [
+            "Facility", "Donor #", "Donor Name", "Donor E-mail", "Donor Account #", 
+            "Donor Phone", "Yield (ml)", "Gender", "Donation Date", "Month", 
+            "Hour Checked In", "Day Of The Week", "Age", "Check-In Time", 
+            "Check-Out Time (Adjusted)", "Visit mins. (Adjusted)", "Donor Address Line 1", 
+            "Donor Address Line 2", "City", "Zip Code", "Donor Status", 
+            "Qual. Status", "Last \tDonation Date", "Pure Plasma", "Target Volume"
+        ]
+        
+        # Filter DataFrame to only include expected columns
+        df_filtered = df.copy()
+        available_columns = [col for col in expected_columns if col in df_filtered.columns]
+        
+        if len(available_columns) < len(expected_columns):
+            missing_columns = [col for col in expected_columns if col not in df_filtered.columns]
+            st.warning(f"⚠️ Some expected columns are missing: {', '.join(missing_columns)}")
+            st.info(f"📊 Using {len(available_columns)} available columns out of {len(expected_columns)} expected")
+        
+        # Keep only the columns that exist in the DataFrame and are expected
+        df_filtered = df_filtered[available_columns]
+        
         # --- NUEVO BLOQUE: Eliminar la 5ta columna si corresponde ---
-        df_to_upload = df.copy()
+        df_to_upload = df_filtered.copy()
         if df_to_upload.shape[1] >= 5:
             fifth_col = df_to_upload.columns[4]
             fifth_col_lower = fifth_col.strip().replace(' ', '').lower()
@@ -847,7 +869,7 @@ def upload_raw_to_supabase(df):
             success = save_data_to_supabase(df_clean, batch_name)
             if success:
                 st.success(f"✅ All {len(df_clean)} records uploaded to Supabase successfully")
-                st.info(f"📊 Data uploaded to olgam_donor_data table")
+                st.info(f"📊 Data uploaded to olgam_donor_data table using {len(df_clean.columns)} columns")
                 return True
             else:
                 st.warning(f"⚠️ Some records could not be uploaded to Supabase, but continuing with processing...")
