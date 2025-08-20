@@ -660,6 +660,16 @@ def save_data_to_supabase(df, batch_name):
         for col in numeric_columns:
             if col in df_clean.columns:
                 df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+                # Handle precision limit for Visit mins. (Adjusted) - max 999.99
+                if col == 'Visit mins. (Adjusted)':
+                    # Cap values at 999.99 to match Supabase schema precision(5,2)
+                    df_clean[col] = df_clean[col].clip(upper=999.99)
+                    # Round to 2 decimal places
+                    df_clean[col] = df_clean[col].round(2)
+                    # Check for values that were capped
+                    capped_count = (df_clean[col] == 999.99).sum()
+                    if capped_count > 0:
+                        st.warning(f"⚠️ {capped_count} values in '{col}' were capped at 999.99 due to database precision limits")
         
         # Convert DataFrame to list of dictionaries
         data_to_insert = df_clean.to_dict('records')
