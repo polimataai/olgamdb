@@ -620,6 +620,7 @@ def save_data_to_supabase(df, batch_name):
     This function inserts the data into the olgam_donor_data table in smaller batches to avoid timeouts."""
     try:
         from supabase import create_client, Client
+        import time
         
         # Initialize Supabase client
         supabase: Client = create_client(
@@ -631,7 +632,7 @@ def save_data_to_supabase(df, batch_name):
         df_clean = df.copy()
         
         # Handle date columns - convert empty strings to None
-        date_columns = ['Donation Date', 'Last 	Donation Date']
+        date_columns = ['Donation Date', 'Last \tDonation Date']
         for col in date_columns:
             if col in df_clean.columns:
                 # Replace empty strings and invalid values with None
@@ -720,16 +721,17 @@ def save_data_to_supabase(df, batch_name):
                             record[field] = float(record[field])
                     except (ValueError, TypeError):
                         record[field] = None
-                
-                # Handle character(1) fields - ensure no field exceeds 1 character
-                for key, value in record.items():
-                    if isinstance(value, str) and len(value) > 1:
-                        # Check if this might be a character(1) field by common naming patterns
-                        if any(char1_indicator in key.lower() for char1_indicator in ['type', 'factor', 'gender', 'status', 'flag']):
-                            record[key] = value[:1]  # Truncate to first character
-                            st.warning(f"⚠️ Field '{key}' value '{value}' was truncated to '{value[:1]}' due to database length limits")
-                
-                # Remove None values and convert to proper JSON format
+            
+            # Handle character(1) fields - ONLY for specific fields that we know are character(1) in Supabase
+            char1_specific_fields = ['Gender', 'Blood Type', 'Rh Factor']  # Add only fields you know are char(1)
+            for field in char1_specific_fields:
+                if field in record and record[field] is not None:
+                    if isinstance(record[field], str) and len(record[field]) > 1:
+                        original_value = record[field]
+                        record[field] = record[field][:1]  # Truncate to first character
+                        st.warning(f"⚠️ Field '{field}' value '{original_value}' was truncated to '{record[field]}' due to database length limits")
+            
+            # Remove None values and convert to proper JSON format
             cleaned_record = {}
             for key, value in record.items():
                 if value is not None and value != '' and str(value).lower() not in ['nan', 'nat', 'null']:
@@ -753,82 +755,67 @@ def save_data_to_supabase(df, batch_name):
                     standardized_record[key] = None
             standardized_records.append(standardized_record)
         
-        # Insert data in smaller batches to avoid timeouts
-        batch_size = 1000  # Insert 1000 records at a time
+        # Insert data in batches with retry logic
+        batch_size = 1000
         total_records = len(standardized_records)
-        inserted_records = 0
-        
-        st.info(f"📊 Inserting {total_records} records in batches of {batch_size}...")
+        successful_inserts = 0
+        failed_batches = []
         
         for i in range(0, total_records, batch_size):
-            batch = standardized_records[i:i + batch_size]
             batch_num = (i // batch_size) + 1
-            total_batches = (total_records + batch_size - 1) // batch_size
+            batch_data = standardized_records[i:i + batch_size]
+            batch_name_with_num = f"{batch_name}_part{batch_num}"
             
-            try:
-                # Insert batch into Supabase
-                result = supabase.table('olgam_donor_data').insert(batch).execute()
-                inserted_records += len(batch)
-                
-                st.success(f"✅ Batch {batch_num}/{total_batches} inserted successfully ({len(batch)} records)")
-                
-            except Exception as batch_error:
-                st.error(f"❌ Error inserting batch {batch_num}: {str(batch_error)}")
-                
-                # Try to save this batch locally as fallback
+            # Retry logic for connection issues
+            max_retries = 3
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
                 try:
-                    df_batch = pd.DataFrame(batch)
-                    local_filename = f"olgam_data_batch_{batch_num}_{batch_name}.xlsx"
-                    df_batch.to_excel(local_filename, index=False)
-                    st.info(f"Batch {batch_num} saved locally as {local_filename}")
+                    # Insert batch with timeout handling
+                    result = supabase.table('olgam_donor_data').insert(batch_data).execute()
                     
-                    # Create a download button for this batch
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        df_batch.to_excel(writer, index=False)
+                    if result.data:
+                        successful_inserts += len(batch_data)
+                        st.success(f"✅ Batch {batch_num} ({len(batch_data)} records) inserted successfully")
+                        break  # Success, exit retry loop
+                    else:
+                        st.warning(f"⚠️ Batch {batch_num} inserted but no confirmation data received")
+                        successful_inserts += len(batch_data)  # Assume success
+                        break
+                        
+                except Exception as e:
+                    error_msg = str(e)
                     
-                    st.download_button(
-                        label=f"⬇️ Download Batch {batch_num}",
-                        data=buffer.getvalue(),
-                        file_name=local_filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    
-                except Exception as local_e:
-                    st.error(f"Could not save batch {batch_num} locally: {str(local_e)}")
+                    # Check if it's a connection/SSL error
+                    if any(ssl_error in error_msg.lower() for ssl_error in ['ssl', 'connection', 'timeout', 'read', 'network']):
+                        if attempt < max_retries - 1:
+                            st.warning(f"⚠️ Connection error on batch {batch_num}, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                        else:
+                            st.error(f"❌ Failed to insert batch {batch_num} after {max_retries} attempts due to connection issues")
+                            failed_batches.append((batch_num, error_msg))
+                    else:
+                        # Non-connection error, don't retry
+                        st.error(f"❌ Error inserting batch {batch_num}: {error_msg}")
+                        failed_batches.append((batch_num, error_msg))
+                        break
         
-        if inserted_records == total_records:
-            st.success(f"✅ All {total_records} records successfully uploaded to Supabase database")
-            st.info(f"📊 Data uploaded to olgam_donor_data table")
-            return True
-        else:
-            st.warning(f"⚠️ Only {inserted_records}/{total_records} records were uploaded successfully")
+        # Summary
+        if failed_batches:
+            st.warning(f"⚠️ {successful_inserts}/{total_records} records were uploaded successfully")
+            st.error(f"❌ {len(failed_batches)} batches failed to upload")
+            for batch_num, error in failed_batches:
+                st.error(f"   - Batch {batch_num}: {error}")
             return False
-        
+        else:
+            st.success(f"✅ All {total_records} records uploaded to Supabase successfully")
+            return True
+            
     except Exception as e:
-        st.error(f"Could not save batch '{batch_name}' to Supabase: {str(e)}")
-        
-        # Try to save locally as fallback
-        try:
-            local_filename = f"olgam_data_excess_{batch_name}.xlsx"
-            df.to_excel(local_filename, index=False)
-            st.info(f"File saved locally as {local_filename} instead.")
-            
-            # Create a download button
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            
-            st.download_button(
-                label=f"⬇️ Download {batch_name} as Excel",
-                data=buffer.getvalue(),
-                file_name=local_filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-        except Exception as local_e:
-            st.error(f"Could not save file locally either: {str(local_e)}")
-        
+        st.error(f"❌ Critical error in save_data_to_supabase: {str(e)}")
         return False
 
 def upload_raw_to_supabase(df):
@@ -911,9 +898,9 @@ def upload_raw_to_supabase(df):
             st.warning(f"⚠️ Could not upload to Supabase, but continuing with processing...")
             st.info(f"📊 The application will continue with the rest of the processes using the original data")
             return True  # Continue with processing even if Supabase upload failed
-        
+            
     except Exception as e:
-        st.error(f"Error processing and uploading data to Supabase: {str(e)}")
+        st.error(f"Error processing data for Supabase: {str(e)}")
         st.warning(f"⚠️ Could not process data for Supabase, but continuing with processing...")
         st.info(f"📊 The application will continue with the rest of the processes using the original data")
         return True  # Continue with processing even if there was an error
