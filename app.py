@@ -671,6 +671,18 @@ def save_data_to_supabase(df, batch_name):
                     if capped_count > 0:
                         st.warning(f"⚠️ {capped_count} values in '{col}' were capped at 999.99 due to database precision limits")
         
+        # Handle character(1) fields - limit to 1 character
+        char1_columns = ['Gender', 'Blood Type', 'Rh Factor']  # Common fields that might be char(1)
+        for col in char1_columns:
+            if col in df_clean.columns:
+                # Convert to string and limit to first character
+                df_clean[col] = df_clean[col].astype(str)
+                df_clean[col] = df_clean[col].str[:1]  # Take only first character
+                # Check for values that were truncated
+                truncated_count = (df_clean[col].str.len() > 1).sum()
+                if truncated_count > 0:
+                    st.warning(f"⚠️ {truncated_count} values in '{col}' were truncated to 1 character due to database field length limits")
+        
         # Convert DataFrame to list of dictionaries
         data_to_insert = df_clean.to_dict('records')
         
@@ -708,8 +720,16 @@ def save_data_to_supabase(df, batch_name):
                             record[field] = float(record[field])
                     except (ValueError, TypeError):
                         record[field] = None
-            
-            # Remove None values and convert to proper JSON format
+                
+                # Handle character(1) fields - ensure no field exceeds 1 character
+                for key, value in record.items():
+                    if isinstance(value, str) and len(value) > 1:
+                        # Check if this might be a character(1) field by common naming patterns
+                        if any(char1_indicator in key.lower() for char1_indicator in ['type', 'factor', 'gender', 'status', 'flag']):
+                            record[key] = value[:1]  # Truncate to first character
+                            st.warning(f"⚠️ Field '{key}' value '{value}' was truncated to '{value[:1]}' due to database length limits")
+                
+                # Remove None values and convert to proper JSON format
             cleaned_record = {}
             for key, value in record.items():
                 if value is not None and value != '' and str(value).lower() not in ['nan', 'nat', 'null']:
