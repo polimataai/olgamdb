@@ -632,7 +632,7 @@ def save_data_to_supabase(df, batch_name):
         df_clean = df.copy()
         
         # Handle date columns - convert empty strings to None
-        date_columns = ['Donation Date', 'Last \tDonation Date']
+        date_columns = ['Donation_Date', 'Last_Donation_Date']
         for col in date_columns:
             if col in df_clean.columns:
                 # Replace empty strings and invalid values with None
@@ -657,20 +657,21 @@ def save_data_to_supabase(df, batch_name):
                 df_clean[col] = df_clean[col].round().astype('Int64')
         
         # Handle numeric columns with decimals
-        numeric_columns = ['Visit mins. (Adjusted)']
+        numeric_columns = ['Visit_mins_Adjusted']
         for col in numeric_columns:
             if col in df_clean.columns:
                 df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
-                # Handle precision limit for Visit mins. (Adjusted) - max 999.99
-                if col == 'Visit mins. (Adjusted)':
-                    # Cap values at 999.99 to match Supabase schema precision(5,2)
-                    df_clean[col] = df_clean[col].clip(upper=999.99)
+                # Handle precision limit for Visit_mins_Adjusted - now numeric(10,2) so max 99999999.99
+                if col == 'Visit_mins_Adjusted':
+                    # With numeric(10,2), max value is 99999999.99 (8 digits before decimal, 2 after)
+                    max_value = 99999999.99
+                    df_clean[col] = df_clean[col].clip(upper=max_value)
                     # Round to 2 decimal places
                     df_clean[col] = df_clean[col].round(2)
                     # Check for values that were capped
-                    capped_count = (df_clean[col] == 999.99).sum()
+                    capped_count = (df_clean[col] == max_value).sum()
                     if capped_count > 0:
-                        st.warning(f"⚠️ {capped_count} values in '{col}' were capped at 999.99 due to database precision limits")
+                        st.warning(f"⚠️ {capped_count} values in '{col}' were capped at {max_value} due to database precision limits")
         
         # Handle character(1) fields - limit to 1 character
         char1_columns = ['Gender', 'Blood Type', 'Rh Factor']  # Common fields that might be char(1)
@@ -822,14 +823,14 @@ def upload_raw_to_supabase(df):
     """Uploads the validated original DataFrame directly to Supabase.
     This function uploads all data to the olgam_donor_data table without checking Google Sheets limits."""
     try:
-        # Define expected columns based on Supabase schema
+        # Define expected columns based on new Supabase schema
         expected_columns = [
             "Facility", "Donor #", "Donor Name", "Donor E-mail", "Donor Account #", 
-            "Donor Phone", "Yield (ml)", "Gender", "Donation Date", "Month", 
-            "Hour Checked In", "Day Of The Week", "Age", "Check-In Time", 
-            "Check-Out Time (Adjusted)", "Visit mins. (Adjusted)", "Donor Address Line 1", 
+            "Donor Phone", "Yield (ml)", "Gender", "Donation_Date", "Month", 
+            "Hour Checked In", "Day_Of_The_Week", "Age", "Check-In Time", 
+            "Check-Out Time (Adjusted)", "Visit_mins_Adjusted", "Donor Address Line 1", 
             "Donor Address Line 2", "City", "Zip Code", "Donor Status", 
-            "Qual. Status", "Last \tDonation Date", "Pure Plasma", "Target Volume"
+            "Qual. Status", "Last_Donation_Date", "Pure Plasma", "Target Volume"
         ]
         
         # Filter DataFrame to only include expected columns
